@@ -560,7 +560,7 @@ var BRASIL_ANALYSTS = ['Andrea'];
 var CHILE_ANALYSTS = TEAM.filter(t=>!t.products.includes('brasil')).map(t=>t.name);
 
 // ─── STORAGE CONFIG ──────────────────────────────────────────────────────────
-var STORAGE_MODE = localStorage.getItem('storage_mode') || 'local'; // 'gs' | 'sharepoint' | 'local'
+var STORAGE_MODE = localStorage.getItem('storage_mode') || 'gs'; // 'gs' | 'sharepoint' | 'local'
 
 var SP_CONFIG = {
   siteUrl: localStorage.getItem('sp_siteUrl') || '',
@@ -568,7 +568,7 @@ var SP_CONFIG = {
 };
 
 var GS_CONFIG = {
-  scriptUrl: localStorage.getItem('gs_scriptUrl') || ''
+  scriptUrl: localStorage.getItem('gs_scriptUrl') || 'https://script.google.com/macros/s/AKfycbwyQ0SPawDp6i56cyorf7xHuJaDFfZXFUChs5rRrlSaxnOBnyYpsaWzpB_m1fJab9BH/exec'
 };
 
 function getStoreMode(){
