@@ -1,0 +1,1758 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gestión de Operaciones — Riesgo Originación</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap');
+:root{
+  /* Creditú Brand Colors */
+  --navy:#002960;     --navy-dark:#001d45;
+  --cyan:#00CCD1;     --cyan-light:#E0F9FA;
+  --magenta:#E9007F;  --magenta-light:#FCEEF5;
+  --teal:#00808F;     --teal-light:#E0F3F5;
+  --amber:#BA7517;    --amber-light:#FAEEDA;
+  --red:#A32D2D;      --red-light:#FCEBEB;
+  --gray-bg:#F4F5F7;  --gray-line:#D8DCE2;
+  --gray-text:#5C6670;--ink:#002960; --white:#FFFFFF;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:"Noto Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--gray-bg);color:var(--ink);min-height:100vh;}
+
+/* NAV */
+.topbar{background:var(--navy-dark);padding:0 24px;display:flex;align-items:center;gap:0;height:52px;border-bottom:3px solid var(--cyan);}
+.topbar .brand{color:var(--white);font-weight:700;font-size:15px;margin-right:24px;white-space:nowrap;letter-spacing:-.3px;}
+.topbar .brand span{color:var(--cyan);font-weight:400;}
+.topbar .brand .dot{color:var(--magenta);}
+.nav-tab{padding:0 16px;height:52px;display:flex;align-items:center;color:rgba(255,255,255,.6);font-size:13px;font-weight:500;cursor:pointer;border-bottom:3px solid transparent;transition:.15s;}
+.nav-tab:hover{color:var(--white);}
+.nav-tab.active{color:var(--white);border-bottom-color:var(--cyan);}
+.topbar .right{margin-left:auto;display:flex;align-items:center;gap:10px;}
+.user-select{font-size:13px;padding:6px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.1);color:var(--white);cursor:pointer;}
+.date-badge{font-size:12px;color:#90c8f0;}
+
+/* LAYOUT */
+.page{display:none;padding:24px;max-width:1100px;margin:0 auto;}
+.page.active{display:block;}
+.panel{background:var(--white);border:1px solid var(--gray-line);border-radius:12px;padding:20px 22px;margin-bottom:18px;}
+.panel-title{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--navy);margin-bottom:14px;}
+.section-title{font-size:14px;font-weight:600;color:var(--ink);margin-bottom:12px;}
+
+/* DAY TOGGLE */
+.daytoggle{display:flex;gap:8px;margin-bottom:18px;}
+.daytoggle button{flex:1;padding:9px 14px;border-radius:8px;border:1px solid var(--gray-line);background:var(--white);color:var(--gray-text);font-size:13px;font-weight:600;cursor:pointer;}
+.daytoggle button.active{background:var(--navy);border-color:var(--navy);color:var(--white);}
+
+/* PRODUCT CARDS */
+.prod-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:18px;}
+.prod-card{border:1px solid var(--gray-line);border-radius:10px;padding:13px 15px;}
+.prod-card .pname{font-size:13px;font-weight:600;margin-bottom:2px;}
+.prod-card .pmeta{font-size:11px;color:var(--gray-text);margin-bottom:8px;}
+.prod-card input[type=number]{width:100%;font-size:20px;font-weight:600;border:none;border-bottom:2px solid var(--gray-line);padding:3px 2px;color:var(--navy-dark);background:transparent;outline:none;margin-bottom:8px;}
+.prod-card input[type=number]:focus{border-bottom-color:var(--navy);}
+.prod-card .urg-label{font-size:10px;color:var(--red);font-weight:600;margin-bottom:3px;}
+.prod-card input.urg{font-size:13px;color:var(--red);border-bottom:2px solid #f9c0c0;}
+
+/* STATS */
+.stats-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;}
+.stat{flex:1;min-width:120px;background:var(--white);border:1px solid var(--gray-line);border-radius:10px;padding:13px 15px;}
+.stat .snum{font-size:22px;font-weight:700;color:var(--navy-dark);}
+.stat .slbl{font-size:11px;color:var(--gray-text);margin-top:2px;}
+.stat.ok{border-color:var(--cyan);background:var(--cyan-light);}
+.stat.ok .snum{color:var(--teal);}
+.stat.risk{border-color:var(--red);background:var(--red-light);}
+.stat.risk .snum{color:var(--red);}
+.stat.warn{border-color:var(--amber);background:var(--amber-light);}
+.stat.warn .snum{color:var(--amber);}
+
+/* ALERTS */
+.alert{border-radius:10px;padding:11px 14px;margin-bottom:12px;font-size:13px;line-height:1.5;}
+.alert.red{background:var(--red-light);border:1px solid var(--red);color:var(--red);}
+.alert.amber{background:var(--amber-light);border:1px solid var(--amber);color:var(--amber);}
+.alert.green{background:var(--teal-light);border:1px solid var(--teal);color:var(--teal);}
+.alert b{font-weight:700;}
+
+/* DISTRIBUTION TABLE */
+table{width:100%;border-collapse:collapse;}
+th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--gray-text);padding:8px 8px;border-bottom:1px solid var(--gray-line);}
+td{padding:10px 8px;border-bottom:1px solid var(--gray-line);font-size:13px;vertical-align:middle;}
+tr:last-child td{border-bottom:none;}
+.bar-track{height:8px;background:var(--gray-bg);border-radius:6px;overflow:hidden;border:1px solid var(--gray-line);min-width:100px;}
+.bar-fill{height:100%;border-radius:6px 0 0 6px;background:var(--cyan);}
+.bar-fill.warn{background:var(--amber);}
+.bar-fill.over{background:var(--red);}
+.analyst-name{font-weight:600;}
+.role-badge{display:inline-block;font-size:10px;font-weight:600;padding:2px 7px;border-radius:20px;background:var(--teal-light);color:var(--teal);margin-top:2px;}
+.role-badge.apoyo{background:#EEEDFE;color:#534AB7;}
+.role-badge.reserva{background:#FEF3C7;color:#92400E;}
+.role-badge.brasil{background:#FEF3C7;color:#92400E;}
+.breakdown{font-size:12px;color:var(--gray-text);}
+
+/* OP ENTRY */
+.op-entry-panel{border:1px dashed var(--gray-line);border-radius:10px;padding:14px;}
+.op-entry-panel .prod-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.op-entry-panel .prod-name{font-size:13px;font-weight:600;}
+.op-entry-panel .prod-count{font-size:12px;color:var(--gray-text);}
+.op-row{display:flex;gap:8px;margin-bottom:8px;align-items:center;flex-wrap:wrap;}
+.op-row input{flex:1;min-width:130px;padding:7px 10px;border:1px solid var(--gray-line);border-radius:7px;font-size:13px;}
+.op-row select{padding:7px 10px;border:1px solid var(--gray-line);border-radius:7px;font-size:13px;color:var(--ink);}
+.op-row button.rm{padding:6px 10px;border:1px solid var(--red-light);border-radius:7px;background:var(--red-light);color:var(--red);font-size:12px;cursor:pointer;}
+.add-op-btn{padding:7px 12px;border:1px dashed var(--gray-line);border-radius:7px;background:var(--white);color:var(--navy);font-size:12px;font-weight:600;cursor:pointer;width:100%;}
+.add-op-btn:hover{background:var(--gray-bg);}
+
+/* BUTTONS */
+.btn-primary{padding:9px 18px;border-radius:8px;border:none;background:var(--navy);color:var(--white);font-size:13px;font-weight:600;cursor:pointer;letter-spacing:.01em;}
+.btn-primary:hover{background:var(--navy-dark);}
+.btn-primary:disabled{opacity:.5;cursor:default;}
+.btn-secondary{padding:9px 18px;border-radius:8px;border:1px solid var(--gray-line);background:var(--white);color:var(--ink);font-size:13px;font-weight:600;cursor:pointer;}
+.btn-teal{padding:9px 18px;border-radius:8px;border:none;background:var(--navy);color:var(--white);font-size:13px;font-weight:600;cursor:pointer;}
+.btn-teal:hover{background:var(--navy-dark);}
+.btn-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:16px;}
+
+/* STATUS BADGES */
+.tier-badge{display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;text-transform:uppercase;}
+.tier-badge.vencido{background:var(--red-light);color:var(--red);}
+.tier-badge.urgente{background:var(--amber-light);color:var(--amber);}
+.tier-badge.normal{background:var(--gray-bg);color:var(--gray-text);}
+.estado-btn{
+  padding:6px 14px;border-radius:20px;font-size:12px;font-weight:700;cursor:pointer;border:2px solid transparent;
+  min-width:120px;text-align:center;transition:all .15s;
+}
+.estado-btn.PENDIENTE{background:var(--magenta-light);color:var(--magenta);border-color:var(--magenta);}
+.estado-btn.PENDIENTE:hover:not(:disabled){background:var(--magenta);color:var(--white);}
+.estado-btn.HECHO{background:var(--cyan-light);color:var(--teal);border-color:var(--cyan);}
+.estado-btn.HECHO:hover:not(:disabled){background:var(--cyan);color:var(--white);}
+.estado-btn:disabled{opacity:.4;cursor:default;}
+
+/* FILTERS */
+.filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:center;}
+.filters select,.filters input{padding:7px 10px;border:1px solid var(--gray-line);border-radius:7px;font-size:13px;color:var(--ink);}
+.filter-label{font-size:12px;color:var(--gray-text);}
+
+/* HIST */
+.hist-row{padding:14px;border:1px solid var(--gray-line);border-radius:10px;margin-bottom:10px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+.hist-date{font-size:14px;font-weight:600;color:var(--navy-dark);min-width:100px;}
+.hist-meta{font-size:12px;color:var(--gray-text);}
+.prog-bar{flex:1;min-width:100px;}
+
+/* MISC */
+.empty{padding:30px;text-align:center;font-size:13px;color:var(--gray-text);}
+.loading{padding:20px;text-align:center;font-size:13px;color:var(--gray-text);}
+.hint{font-size:12px;color:var(--gray-text);line-height:1.6;margin-bottom:12px;}
+.divider{border:none;border-top:1px solid var(--gray-line);margin:16px 0;}
+.flex-between{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;}
+  .avail-grid{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:4px;}
+  .avail-chip{
+    display:flex;align-items:center;gap:8px;padding:8px 14px;border-radius:24px;
+    border:1px solid var(--gray-line);background:var(--white);cursor:pointer;font-size:13px;font-weight:500;
+    transition:.15s;user-select:none;
+  }
+  .avail-chip.present{border-color:var(--cyan);background:var(--cyan-light);color:var(--teal);}
+  .avail-chip.absent{border-color:var(--red);background:var(--red-light);color:var(--red);text-decoration:line-through;}
+  .avail-chip .dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex-shrink:0;}
+  .absence-alert{background:var(--amber-light);border:1px solid var(--amber);border-radius:10px;padding:12px 14px;margin-top:12px;font-size:12px;color:var(--amber);line-height:1.7;}
+  .absence-alert b{color:var(--ink);}
+  .absence-row{display:flex;align-items:flex-start;gap:6px;margin-top:4px;}
+  .absence-row .arrow{flex-shrink:0;color:var(--amber);}
+
+  /* MI TURNO */
+  .op-card{
+    border:1px solid var(--gray-line);border-radius:12px;padding:16px 18px;margin-bottom:12px;
+    display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:var(--white);
+  }
+  .op-card.hecho{opacity:.55;border-color:var(--teal);background:var(--teal-light);}
+  .op-card .op-info{flex:1;min-width:160px;}
+  .op-card .op-prod{font-size:13px;font-weight:600;color:var(--ink);}
+  .op-card .op-id{font-size:12px;color:var(--gray-text);margin-top:3px;}
+  .op-card .op-id input{
+    border:none;border-bottom:1px dashed var(--gray-line);background:transparent;
+    font-size:12px;color:var(--ink);outline:none;padding:1px 2px;width:180px;
+  }
+  .op-card .op-id input:focus{border-bottom-color:var(--navy);}
+  .estado-big{
+    padding:10px 20px;border-radius:24px;font-size:13px;font-weight:700;cursor:pointer;
+    border:none;min-width:120px;text-align:center;transition:.15s;
+  }
+  .estado-big.PENDIENTE{background:var(--magenta-light);color:var(--magenta);}
+  .estado-big.PENDIENTE:hover{background:#f9c8e2;}
+  .estado-big.HECHO{background:var(--cyan-light);color:var(--teal);}
+  .estado-big.HECHO:hover{background:#c0e8d8;}
+  .no-user-msg{padding:40px;text-align:center;color:var(--gray-text);font-size:14px;}
+  .obs-field{
+    font-size:12px;color:var(--gray-text);border:none;border-bottom:1px dashed var(--gray-line);
+    background:transparent;outline:none;width:100%;padding:2px 3px;resize:none;
+    font-family:inherit;transition:border-color .15s;
+  }
+  .obs-field:focus{border-bottom-color:var(--cyan);color:var(--ink);}
+  .obs-field::placeholder{color:var(--gray-line);}
+  .obs-wrap{margin-top:5px;}
+  .obs-label{font-size:10px;color:var(--gray-text);font-weight:600;margin-bottom:2px;text-transform:uppercase;letter-spacing:.04em;}
+  .dup-warning{
+    font-size:11px;color:var(--red);font-weight:600;margin-top:3px;
+    display:flex;align-items:center;gap:4px;
+  }
+  .dup-warning::before{content:"⚠";font-size:12px;}
+  .op-row.has-dup input[type=text]{border-color:var(--red);background:var(--red-light);}
+</style>
+</head>
+<body>
+
+<!-- TOP NAV -->
+<div class="topbar">
+  <div class="brand">creditú<span class="dot">·</span><span>Riesgo</span></div>
+  <div class="nav-tab active" onclick="goTo('plan')">Planificación</div>
+  <div class="nav-tab" onclick="goTo('ops')">Operaciones</div>
+  <div class="nav-tab" onclick="goTo('seguimiento')">Seguimiento</div>
+  <div class="nav-tab" id="mi-turno-tab" onclick="goTo('miturno')">Mi turno</div>
+  <div class="nav-tab" onclick="goTo('historial')">Historial</div>
+  <div class="right">
+    <span class="date-badge" id="date-badge"></span>
+    <span id="conn-badge" style="font-size:11px;padding:3px 8px;border-radius:20px;cursor:pointer;" onclick="openSettings()" title="Configuración de conexión"></span>
+    <select class="user-select" id="user-select" onchange="setCurrentUser(this.value)">
+      <option value="">¿Quién eres?</option>
+    </select>
+    <button onclick="openSettings()" style="background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);color:var(--white);border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer;">⚙</button>
+  </div>
+</div>
+
+<!-- PAGE 1: PLANIFICACIÓN -->
+<div class="page active" id="page-plan">
+  <div class="panel">
+    <div class="flex-between" style="margin-bottom:14px;">
+      <div class="panel-title" style="margin-bottom:0;">Día de operación</div>
+      <div class="daytoggle" style="margin-bottom:0;max-width:360px;">
+        <button id="btn-lj" class="active" onclick="setDayType('LJ')">Lunes–Jueves · 21 ops</button>
+        <button id="btn-v" onclick="setDayType('V')">Viernes · 16 ops</button>
+      </div>
+    </div>
+    <div class="panel-title" style="margin-bottom:8px;">Disponibilidad del equipo hoy</div>
+    <p class="hint" style="margin-bottom:10px;">Haz clic para marcar a alguien como ausente. La distribución se recalcula automáticamente sin esa persona.</p>
+    <div class="avail-grid" id="avail-grid"></div>
+    <div id="absence-detail"></div>
+  </div>
+
+  <div class="panel">
+    <p class="hint">Ingresa el volumen total por producto. El campo rojo (opcional) es para operaciones que vencen su SLA hoy — se priorizan primero.</p>
+    <div class="prod-grid" id="prod-grid"></div>
+  </div>
+
+  <div class="stats-row" id="stats-row"></div>
+  <div id="alert-wrap"></div>
+
+  <div class="panel">
+    <div class="panel-title">Distribución sugerida por analista</div>
+    <table>
+      <thead><tr><th>Analista</th><th>Detalle</th><th>Carga / capacidad</th></tr></thead>
+      <tbody id="dist-body"></tbody>
+    </table>
+    <div class="btn-row">
+      <button class="btn-teal" onclick="goTo('ops')">Continuar → Cargar operaciones</button>
+    </div>
+  </div>
+</div>
+
+<!-- PAGE 2: OPERACIONES -->
+<div class="page" id="page-ops">
+  <div class="panel">
+    <div class="flex-between" style="margin-bottom:12px;">
+      <div class="panel-title" style="margin-bottom:0;">Cargar operaciones del día</div>
+      <span class="hint" style="margin:0;">Ingresa RUT, ID o CPF de cada operación. El sistema asigna automáticamente; puedes cambiar la asignación.</span>
+    </div>
+    <div id="ops-entry-panels"></div>
+    <div id="dup-status" style="margin-bottom:8px;"></div>
+    <div class="btn-row" id="confirm-btn-row">
+      <button class="btn-primary" onclick="confirmDay()">Confirmar y guardar reparto — <span id="confirm-date-label"></span></button>
+      <span id="confirm-status" style="font-size:12px;color:var(--gray-text);"></span>
+    </div>
+  </div>
+</div>
+
+<!-- PAGE 3: SEGUIMIENTO -->
+<div class="page" id="page-seguimiento">
+  <div class="panel">
+    <div class="flex-between" style="margin-bottom:12px;">
+      <div class="panel-title" style="margin-bottom:0;">Seguimiento del día</div>
+      <button class="btn-secondary" onclick="loadSeguimiento()" style="font-size:12px;padding:6px 12px;">Actualizar</button>
+    </div>
+    <div style="background:var(--cyan-light);border:1px solid var(--cyan);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--teal);">
+      <b>Para marcar una operación como realizada:</b> haz clic en el botón de estado (columna "Estado") — alterna entre
+      <span style="background:var(--magenta-light);color:var(--magenta);padding:2px 8px;border-radius:10px;font-weight:700;font-size:11px;">PENDIENTE</span> y
+      <span style="background:var(--cyan-light);color:var(--teal);padding:2px 8px;border-radius:10px;font-weight:700;font-size:11px;border:1px solid var(--cyan);">HECHO</span>.
+      Si el botón aparece atenuado (opaco), selecciona tu nombre en el menú arriba a la derecha para activar tu turno.
+    </div>
+    <div class="stats-row" id="seg-stats"></div>
+    <div class="filters">
+      <span class="filter-label">Filtrar:</span>
+      <select id="filter-analista" onchange="renderSeguimiento()"><option value="">Todos los analistas</option></select>
+      <select id="filter-estado" onchange="renderSeguimiento()">
+        <option value="">Todos los estados</option>
+        <option value="PENDIENTE">Pendiente</option>
+        <option value="HECHO">Hecho</option>
+      </select>
+      <select id="filter-producto" onchange="renderSeguimiento()"><option value="">Todos los productos</option></select>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Producto</th><th>Identificador</th><th>Analista</th><th>Urgencia</th><th>Estado</th><th>Completado</th><th>Observación</th>
+        </tr>
+      </thead>
+      <tbody id="seg-body"></tbody>
+    </table>
+    <div id="seg-empty"></div>
+  </div>
+</div>
+
+<!-- PAGE 4: HISTORIAL -->
+<div class="page" id="page-historial">
+  <div class="panel">
+    <div class="panel-title">Historial de repartos confirmados</div>
+    <div id="hist-body"></div>
+  </div>
+</div>
+
+<!-- PAGE 5: MI TURNO -->
+<div class="page" id="page-miturno">
+  <div class="panel">
+    <div class="flex-between" style="margin-bottom:14px;">
+      <div>
+        <div class="panel-title" style="margin-bottom:4px;">Mis operaciones del día</div>
+        <div id="miturno-subtitle" style="font-size:13px;color:var(--gray-text);"></div>
+      </div>
+      <button class="btn-secondary" onclick="loadMiTurno()" style="font-size:12px;padding:6px 12px;">Actualizar</button>
+    </div>
+    <div class="stats-row" id="miturno-stats"></div>
+    <div id="miturno-empty"></div>
+    <div id="miturno-cards"></div>
+  </div>
+</div>
+
+<!-- SETTINGS MODAL -->
+<div id="settings-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;align-items:center;justify-content:center;">
+  <div style="background:var(--white);border-radius:14px;padding:28px;max-width:600px;width:95%;max-height:92vh;overflow-y:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <div style="font-size:16px;font-weight:700;color:var(--navy);">Configuración de almacenamiento compartido</div>
+      <button onclick="closeSettings()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--gray-text);">✕</button>
+    </div>
+    <div id="conn-status-panel" style="margin-bottom:16px;"></div>
+
+    <!-- Mode tabs -->
+    <div style="display:flex;gap:8px;margin-bottom:20px;border-bottom:1px solid var(--gray-line);padding-bottom:0;">
+      <button id="tab-gs" onclick="switchSettingsTab('gs')"
+        style="padding:8px 16px;border:none;border-bottom:3px solid transparent;background:none;font-size:13px;font-weight:600;cursor:pointer;color:var(--gray-text);">
+        Google Sheets
+      </button>
+      <button id="tab-sp" onclick="switchSettingsTab('sp')"
+        style="padding:8px 16px;border:none;border-bottom:3px solid transparent;background:none;font-size:13px;font-weight:600;cursor:pointer;color:var(--gray-text);">
+        SharePoint
+      </button>
+      <button id="tab-local" onclick="switchSettingsTab('local')"
+        style="padding:8px 16px;border:none;border-bottom:3px solid transparent;background:none;font-size:13px;font-weight:600;cursor:pointer;color:var(--gray-text);">
+        Solo local
+      </button>
+    </div>
+
+    <!-- Google Sheets panel -->
+    <div id="panel-gs">
+      <div style="margin-bottom:14px;">
+        <label style="font-size:12px;font-weight:600;color:var(--gray-text);display:block;margin-bottom:6px;">URL del script de Google Apps</label>
+        <input id="gs-url-input" type="url" placeholder="https://script.google.com/macros/s/AKfy.../exec"
+          style="width:100%;padding:10px 12px;border:1px solid var(--gray-line);border-radius:8px;font-size:13px;"
+          oninput="saveGsConfig()">
+        <div style="font-size:11px;color:var(--gray-text);margin-top:4px;">El URL que obtienes al publicar el script como aplicación web.</div>
+      </div>
+      <div style="display:flex;gap:10px;margin-bottom:18px;">
+        <button class="btn-primary" onclick="testGsConnection()" id="test-gs-btn">Probar conexión</button>
+        <span id="test-gs-result" style="font-size:12px;align-self:center;"></span>
+      </div>
+      <details open>
+        <summary style="font-size:13px;font-weight:600;color:var(--navy);cursor:pointer;padding:6px 0;">📋 Instrucciones: configurar Google Sheets (5 minutos)</summary>
+        <div style="font-size:12px;color:var(--gray-text);line-height:1.8;margin-top:10px;padding:14px;background:var(--gray-bg);border-radius:8px;">
+          <b style="color:var(--ink);">1. Crea un Google Sheet nuevo</b><br>
+          Ve a <a href="https://sheets.google.com" target="_blank" style="color:var(--teal);">sheets.google.com</a> → crea una hoja en blanco → ponle el nombre que quieras (ej. "Gestión Operaciones Riesgo")<br><br>
+          <b style="color:var(--ink);">2. Abre el editor de Apps Script</b><br>
+          Extensiones → Apps Script → borra el código que viene por defecto<br><br>
+          <b style="color:var(--ink);">3. Pega este código:</b>
+          <div style="position:relative;margin:6px 0;">
+            <button onclick="copyGsCode()" style="position:absolute;top:6px;right:6px;padding:3px 8px;font-size:10px;border:1px solid var(--gray-line);border-radius:4px;background:var(--white);cursor:pointer;z-index:1;">Copiar</button>
+            <pre id="gs-code-block" style="background:var(--ink);color:#e2e8f0;padding:12px;border-radius:6px;overflow-x:auto;font-size:11px;line-height:1.5;margin:0;">function doPost(e) {
+  try {
+    var params = JSON.parse(e.postData.contents);
+    var result = handleRequest(params);
+    return ContentService
+      .createTextOutput(JSON.stringify(result))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch(err) {
+    return ContentService
+      .createTextOutput(JSON.stringify({error: err.toString()}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function handleRequest(params) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var action = params.action;
+
+  // ── Hoja de datos JSON (motor interno) ─────────────────────────────────────
+  var sheet = ss.getSheetByName('GestionOps');
+  if (!sheet) {
+    sheet = ss.insertSheet('GestionOps');
+    sheet.appendRow(['Clave', 'Datos', 'Actualizado']);
+    sheet.setFrozenRows(1);
+  }
+  var data = sheet.getDataRange().getValues();
+
+  if (action === 'set') {
+    for (var i = 1; i &lt; data.length; i++) {
+      if (data[i][0] === params.key) {
+        sheet.getRange(i+1,2).setValue(params.value);
+        sheet.getRange(i+1,3).setValue(new Date().toISOString());
+        return {success:true};
+      }
+    }
+    sheet.appendRow([params.key, params.value, new Date().toISOString()]);
+    return {success:true};
+  }
+  if (action === 'get') {
+    for (var j = 1; j &lt; data.length; j++) {
+      if (data[j][0] === params.key) return {key:params.key, value:data[j][1]};
+    }
+    return {key:params.key, value:null};
+  }
+  if (action === 'list') {
+    var prefix = params.prefix || '';
+    var keys = [];
+    for (var k = 1; k &lt; data.length; k++) {
+      if (data[k][0] && data[k][0].toString().startsWith(prefix)) keys.push(data[k][0].toString());
+    }
+    return {keys:keys};
+  }
+  if (action === 'ping') return {ok:true};
+
+  // ── Hoja de registro histórico (legible, por fila) ─────────────────────────
+  if (action === 'logRows') {
+    var COLS = ['Fecha','Analista','Producto','Tipo ID','Identificador',
+                'Estado','Urgencia','Observación','Hora Asignación',
+                'Hora Completado','Confirmado por','ID Operación'];
+    var log = ss.getSheetByName('RegistroHistorico');
+    if (!log) {
+      log = ss.insertSheet('RegistroHistorico');
+      log.appendRow(COLS);
+      log.setFrozenRows(1);
+      var hdr = log.getRange(1,1,1,COLS.length);
+      hdr.setBackground('#002960');
+      hdr.setFontColor('#FFFFFF');
+      hdr.setFontWeight('bold');
+    }
+    var logData = log.getDataRange().getValues();
+    var uidCol = 11; // columna L (índice 0 = col A)
+    var rows = params.rows;
+    for (var r = 0; r &lt; rows.length; r++) {
+      var op = rows[r];
+      var rowArr = [
+        op.date        || '',
+        op.analista    || '',
+        op.productName || '',
+        op.idType      || '',
+        op.identificador || '(pendiente)',
+        op.estado      || 'PENDIENTE',
+        op.tier        || 'normal',
+        op.obs_seguimiento || '',
+        op.asignado_en  ? new Date(op.asignado_en).toLocaleString('es-CL')  : '',
+        op.completado_en? new Date(op.completado_en).toLocaleString('es-CL'): '',
+        op.confirmedBy || '',
+        op.uid         || ''
+      ];
+      var found = false;
+      for (var m = 1; m &lt; logData.length; m++) {
+        if (logData[m][uidCol] === op.uid) {
+          log.getRange(m+1, 1, 1, COLS.length).setValues([rowArr]);
+          logData[m] = rowArr;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        log.appendRow(rowArr);
+        logData.push(rowArr);
+      }
+    }
+    return {success:true, rows:rows.length};
+  }
+
+  return {error:'Acción no reconocida: ' + action};
+}</pre>
+          </div>
+          <b style="color:var(--ink);">4. Publica como aplicación web</b><br>
+          Haz clic en <i>Implementar</i> → <i>Nueva implementación</i> → tipo: <i>Aplicación web</i><br>
+          Ejecutar como: <b>Yo</b> · Quién tiene acceso: <b>Cualquier usuario</b> → <i>Implementar</i><br><br>
+          <b style="color:var(--ink);">5. Copia el URL del script</b><br>
+          Copia el URL que aparece (empieza con <code style="background:var(--white);padding:1px 4px;border-radius:3px;">https://script.google.com/macros/s/</code>) y pégalo arriba.<br><br>
+          <b style="color:var(--ink);">6. Comparte la hoja con tu equipo</b><br>
+          En Google Sheets → <i>Compartir</i> → agrega los emails de tu equipo con permiso de edición.
+        </div>
+      </details>
+    </div>
+
+    <!-- SharePoint panel -->
+    <div id="panel-sp" style="display:none;">
+      <div style="margin-bottom:14px;">
+        <label style="font-size:12px;font-weight:600;color:var(--gray-text);display:block;margin-bottom:6px;">URL de tu sitio SharePoint</label>
+        <input id="sp-url-input" type="url" placeholder="https://tuempresa.sharepoint.com/sites/riesgo"
+          style="width:100%;padding:10px 12px;border:1px solid var(--gray-line);border-radius:8px;font-size:13px;"
+          oninput="saveSpConfig()">
+      </div>
+      <div style="margin-bottom:14px;">
+        <label style="font-size:12px;font-weight:600;color:var(--gray-text);display:block;margin-bottom:6px;">Nombre de la lista</label>
+        <input id="sp-list-input" type="text" value="GestionRiesgoOps"
+          style="width:100%;padding:10px 12px;border:1px solid var(--gray-line);border-radius:8px;font-size:13px;"
+          oninput="saveSpConfig()">
+      </div>
+      <div style="display:flex;gap:10px;margin-bottom:18px;">
+        <button class="btn-primary" onclick="testSpConnection()" id="test-btn">Probar conexión</button>
+        <span id="test-result" style="font-size:12px;align-self:center;"></span>
+      </div>
+      <details>
+        <summary style="font-size:13px;font-weight:600;color:var(--navy);cursor:pointer;padding:6px 0;">📋 Instrucciones: crear la lista en SharePoint</summary>
+        <div style="font-size:12px;color:var(--gray-text);line-height:1.8;margin-top:10px;padding:14px;background:var(--gray-bg);border-radius:8px;">
+          Menú ⚙ → Contenidos del sitio → + Nuevo → Lista → Lista en blanco → nombre: <code>GestionRiesgoOps</code><br>
+          Agrega columna: Varias líneas de texto, nombre: <code>DataJSON</code>, Texto sin formato, límite 30.000.<br>
+          Sube el HTML a Documentos del sitio y comparte el link con tu equipo.
+        </div>
+      </details>
+    </div>
+
+    <!-- Local panel -->
+    <div id="panel-local" style="display:none;">
+      <div style="background:var(--amber-light);border:1px solid var(--amber);border-radius:8px;padding:14px;font-size:13px;color:var(--amber);">
+        <b>Modo local activo.</b> Los datos se guardan en este navegador únicamente. Cada persona del equipo verá sus propios datos, no hay datos compartidos. Útil solo para pruebas.
+      </div>
+      <button class="btn-secondary" onclick="clearLocalData()" style="margin-top:14px;font-size:12px;">Borrar datos locales</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── CONFIG ────────────────────────────────────────────────────────────────
+var PRODUCTS = [
+  {key:'leasing',  name:'Leasing Habitacional', idType:'ID',  slaH:24, priority:1, dflt:13},
+  {key:'pie',      name:'Pie Hipotecario',      idType:'ID',  slaH:24, priority:2, dflt:15},
+  {key:'pv',       name:'Primera Vivienda',     idType:'RUT', slaH:48, priority:3, dflt:23},
+  {key:'subsidio', name:'Subsidio',             idType:'RUT', slaH:48, priority:4, dflt:50},
+  {key:'brasil',   name:'Brasil',               idType:'CPF', slaH:24, priority:5, dflt:5},
+];
+// products[] = productos en que el analista trabaja habitualmente
+// reserve:true = entra solo en peaks (inactivo por defecto en disponibilidad)
+var TEAM = [
+  {name:'Argelis',   products:['leasing','subsidio'],        role:'Analista',       reserve:false},
+  {name:'Iliana',    products:['pie','subsidio'],            role:'Analista',       reserve:false},
+  {name:'Josmar',    products:['pv','pie'],                  role:'Analista',       reserve:false},
+  {name:'Yusbreili', products:['pie','subsidio'],            role:'Analista',       reserve:false},
+  {name:'Matías',    products:['subsidio','leasing'],        role:'Analista',       reserve:false},
+  {name:'Valentina', products:['leasing','pv'],              role:'Analista',       reserve:false},
+  {name:'Ivan',      products:['leasing','pie','pv','subsidio'], role:'Reserva',   reserve:true},
+  {name:'Andrea',    products:['brasil'],                    role:'Analista Brasil', reserve:false},
+];
+var JEFE = 'Jefe de Riesgo';
+var CAPS = {LJ:21, V:16};
+var BRASIL_ANALYSTS = ['Andrea'];
+var CHILE_ANALYSTS = TEAM.filter(t=>!t.products.includes('brasil')).map(t=>t.name);
+
+// ─── STORAGE CONFIG ──────────────────────────────────────────────────────────
+var STORAGE_MODE = localStorage.getItem('storage_mode') || 'local'; // 'gs' | 'sharepoint' | 'local'
+
+var SP_CONFIG = {
+  siteUrl: localStorage.getItem('sp_siteUrl') || '',
+  listName: localStorage.getItem('sp_listName') || 'GestionRiesgoOps'
+};
+
+var GS_CONFIG = {
+  scriptUrl: localStorage.getItem('gs_scriptUrl') || ''
+};
+
+function getStoreMode(){
+  if(STORAGE_MODE==='gs' && GS_CONFIG.scriptUrl) return 'gs';
+  if(STORAGE_MODE==='sharepoint' && SP_CONFIG.siteUrl) return 'sharepoint';
+  return 'local';
+}
+
+// ─── SETTINGS UI ─────────────────────────────────────────────────────────────
+function openSettings(){
+  document.getElementById('settings-modal').style.display = 'flex';
+  document.getElementById('sp-url-input').value = SP_CONFIG.siteUrl;
+  document.getElementById('sp-list-input').value = SP_CONFIG.listName;
+  document.getElementById('gs-url-input').value = GS_CONFIG.scriptUrl;
+  switchSettingsTab(STORAGE_MODE==='gs'?'gs':STORAGE_MODE==='sharepoint'?'sp':'local');
+  updateSettingsStatus();
+}
+
+function closeSettings(){ document.getElementById('settings-modal').style.display = 'none'; }
+
+function switchSettingsTab(tab){
+  ['gs','sp','local'].forEach(t=>{
+    const panel = document.getElementById('panel-'+t);
+    const tabBtn = document.getElementById('tab-'+t);
+    if(panel) panel.style.display = t===tab ? 'block' : 'none';
+    if(tabBtn){
+      tabBtn.style.borderBottomColor = t===tab ? 'var(--cyan)' : 'transparent';
+      tabBtn.style.color = t===tab ? 'var(--navy)' : 'var(--gray-text)';
+    }
+  });
+}
+
+function saveGsConfig(){
+  GS_CONFIG.scriptUrl = (document.getElementById('gs-url-input').value||'').trim();
+  localStorage.setItem('gs_scriptUrl', GS_CONFIG.scriptUrl);
+  if(GS_CONFIG.scriptUrl){ STORAGE_MODE='gs'; localStorage.setItem('storage_mode','gs'); }
+  updateConnBadge();
+}
+
+function saveSpConfig(){
+  SP_CONFIG.siteUrl = (document.getElementById('sp-url-input').value||'').trim().replace(/\/+$/, '');
+  SP_CONFIG.listName = (document.getElementById('sp-list-input').value||'').trim() || 'GestionRiesgoOps';
+  localStorage.setItem('sp_siteUrl', SP_CONFIG.siteUrl);
+  localStorage.setItem('sp_listName', SP_CONFIG.listName);
+  if(SP_CONFIG.siteUrl){ STORAGE_MODE='sharepoint'; localStorage.setItem('storage_mode','sharepoint'); }
+  updateConnBadge();
+}
+
+function updateSettingsStatus(){
+  const el = document.getElementById('conn-status-panel');
+  const mode = getStoreMode();
+  const msgs = {
+    gs: '<div style="background:var(--teal-light);border:1px solid var(--teal);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--teal);"><b>✓ Modo Google Sheets activo.</b> Todos los cambios se guardan en tu Google Sheet y son visibles para el equipo.</div>',
+    sharepoint: '<div style="background:var(--teal-light);border:1px solid var(--teal);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--teal);"><b>✓ Modo SharePoint activo.</b> Los datos se guardan en tu lista y son visibles para el equipo.</div>',
+    local: '<div style="background:var(--amber-light);border:1px solid var(--amber);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--amber);"><b>⚠ Modo local.</b> Solo visible en este navegador. Configura Google Sheets o SharePoint para uso del equipo.</div>'
+  };
+  el.innerHTML = msgs[mode];
+}
+
+function updateConnBadge(){
+  const badge = document.getElementById('conn-badge');
+  if(!badge) return;
+  const mode = getStoreMode();
+  const labels = { gs:'● Google Sheets', sharepoint:'● SharePoint', local:'● Local' };
+  const colors = { gs:'rgba(0,204,209,.25)', sharepoint:'rgba(0,204,209,.25)', local:'rgba(186,117,23,.25)' };
+  const textColors = { gs:'var(--cyan)', sharepoint:'var(--cyan)', local:'#f0c040' };
+  badge.textContent = labels[mode];
+  badge.style.background = colors[mode];
+  badge.style.color = textColors[mode];
+}
+
+function copyGsCode(){
+  const code = document.getElementById('gs-code-block').innerText;
+  navigator.clipboard.writeText(code).then(()=>{
+    const btn = event.target;
+    btn.textContent='¡Copiado!'; setTimeout(()=>btn.textContent='Copiar',2000);
+  }).catch(()=>{ alert('Copia manualmente el código del bloque.'); });
+}
+
+function clearLocalData(){
+  if(confirm('¿Borrar todos los datos locales? Esto no afecta Google Sheets ni SharePoint.')){
+    const keys=[];
+    for(let i=0;i<localStorage.length;i++) if(localStorage.key(i).startsWith('gestion:')) keys.push(localStorage.key(i));
+    keys.forEach(k=>localStorage.removeItem(k));
+    alert('Datos locales borrados.');
+  }
+}
+
+async function testGsConnection(){
+  const btn = document.getElementById('test-gs-btn');
+  const result = document.getElementById('test-gs-result');
+  saveGsConfig();
+  if(!GS_CONFIG.scriptUrl){ result.textContent = 'Ingresa el URL del script primero.'; return; }
+  btn.disabled=true; btn.textContent='Probando...'; result.textContent='';
+  try{
+    const r = await fetch(GS_CONFIG.scriptUrl, { method:'POST', body:JSON.stringify({action:'ping'}) });
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const d = await r.json();
+    if(d.ok || d.success !== undefined || d.error === undefined){
+      result.innerHTML='<span style="color:var(--teal)">✓ Conexión exitosa. Google Sheets listo.</span>';
+      STORAGE_MODE='gs'; localStorage.setItem('storage_mode','gs');
+      updateSettingsStatus(); updateConnBadge();
+    } else {
+      throw new Error(d.error||'Respuesta inesperada');
+    }
+  } catch(e){
+    result.innerHTML='<span style="color:var(--red)">✗ Error: '+e.message+'. Verifica el URL y que el script esté publicado como "Cualquier usuario".</span>';
+  }
+  btn.disabled=false; btn.textContent='Probar conexión';
+}
+
+async function testSpConnection(){
+  const btn = document.getElementById('test-btn');
+  const result = document.getElementById('test-result');
+  saveSpConfig();
+  if(!SP_CONFIG.siteUrl){ result.textContent = 'Ingresa el URL de tu sitio primero.'; return; }
+  btn.disabled=true; btn.textContent='Probando...'; result.textContent='';
+  try{
+    const digest = await spGetDigest();
+    const r = await fetch(`${SP_CONFIG.siteUrl}/_api/web/lists/getbytitle('${SP_CONFIG.listName}')/items?$top=1`, {
+      headers:{'Accept':'application/json;odata=verbose'}, credentials:'include'
+    });
+    if(r.status===404){
+      result.innerHTML='<span style="color:var(--amber)">⚠ Conexión OK pero la lista "'+SP_CONFIG.listName+'" no existe. Créala según las instrucciones.</span>';
+    } else if(!r.ok){ throw new Error('HTTP '+r.status); }
+    else {
+      result.innerHTML='<span style="color:var(--teal)">✓ Conexión exitosa. SharePoint listo.</span>';
+      STORAGE_MODE='sharepoint'; localStorage.setItem('storage_mode','sharepoint');
+      updateSettingsStatus(); updateConnBadge();
+    }
+  } catch(e){
+    result.innerHTML='<span style="color:var(--red)">✗ Error: '+e.message+'</span>';
+  }
+  btn.disabled=false; btn.textContent='Probar conexión';
+}
+
+// ─── GOOGLE SHEETS REST API ─────────────────────────────────────────────────
+async function gsCall(action, params){
+  const payload = JSON.stringify({action, ...params});
+  const r = await fetch(GS_CONFIG.scriptUrl, {method:'POST', body:payload});
+  if(!r.ok) throw new Error('Error HTTP '+r.status+'. Verifica que el script esté publicado.');
+  return r.json();
+}
+
+async function gsSet(key, value){ await gsCall('set',{key,value}); return {key,value}; }
+async function gsGet(key){ const d = await gsCall('get',{key}); return d.value?{key,value:d.value}:null; }
+async function gsList(prefix){ const d = await gsCall('list',{prefix:prefix||''}); return {keys:d.keys||[]}; }
+
+async function gsLogRows(ops, confirmedBy, date){
+  if(getStoreMode()!=='gs') return; // solo en modo Google Sheets
+  const rows = ops.map(op=>({
+    uid: op.uid,
+    date: date||currentDate,
+    analista: op.analista||'',
+    productName: op.productName||op.productKey||'',
+    idType: PRODUCTS.find(p=>p.key===op.productKey)?.idType||'',
+    identificador: op.identificador||'',
+    estado: op.estado||'PENDIENTE',
+    tier: op.tier||'normal',
+    obs_seguimiento: op.obs_seguimiento||'',
+    asignado_en: op.asignado_en||'',
+    completado_en: op.completado_en||'',
+    confirmedBy: confirmedBy||currentUser||'—'
+  }));
+  try{
+    await gsCall('logRows',{rows});
+  } catch(e){
+    console.error('Error escribiendo registro histórico:', e);
+  }
+}
+
+// ─── SHAREPOINT REST API ────────────────────────────────────────────────────
+async function spGetDigest(){
+  const r = await fetch(SP_CONFIG.siteUrl+'/_api/contextinfo', {
+    method:'POST', headers:{'Accept':'application/json;odata=verbose'}, credentials:'include'
+  });
+  if(!r.ok) throw new Error('No se pudo conectar con SharePoint ('+r.status+'). ¿Estás logueado?');
+  const d = await r.json();
+  return d.d.GetContextWebInformation.FormDigestValue;
+}
+
+async function spGetRaw(key){
+  const url = `${SP_CONFIG.siteUrl}/_api/web/lists/getbytitle('${SP_CONFIG.listName}')/items?$filter=Title eq '${encodeURIComponent(key)}'&$select=Id,DataJSON&$top=1`;
+  const r = await fetch(url, { headers:{'Accept':'application/json;odata=verbose'}, credentials:'include' });
+  if(!r.ok) throw new Error('Error leyendo SharePoint: '+r.status);
+  const d = await r.json();
+  return d.d.results[0] || null;
+}
+
+async function spSet(key, value){
+  const existing = await spGetRaw(key);
+  const digest = await spGetDigest();
+  const body = JSON.stringify({ __metadata:{type:'SP.ListItem'}, Title:key, DataJSON:value });
+  const headers = {
+    'Accept':'application/json;odata=verbose',
+    'Content-Type':'application/json;odata=verbose',
+    'X-RequestDigest': digest
+  };
+  if(existing){
+    await fetch(`${SP_CONFIG.siteUrl}/_api/web/lists/getbytitle('${SP_CONFIG.listName}')/items(${existing.Id})`, {
+      method:'POST', headers:{...headers,'X-HTTP-Method':'MERGE','IF-MATCH':'*'}, body, credentials:'include'
+    });
+  } else {
+    await fetch(`${SP_CONFIG.siteUrl}/_api/web/lists/getbytitle('${SP_CONFIG.listName}')/items`, {
+      method:'POST', headers, body, credentials:'include'
+    });
+  }
+  return {key, value};
+}
+
+async function spGet(key){
+  const item = await spGetRaw(key);
+  if(!item || !item.DataJSON) return null;
+  return {key, value:item.DataJSON};
+}
+
+async function spList(prefix){
+  const filter = prefix ? `$filter=startswith(Title,'${encodeURIComponent(prefix)}')` : '';
+  const url = `${SP_CONFIG.siteUrl}/_api/web/lists/getbytitle('${SP_CONFIG.listName}')/items?$select=Title&${filter}&$top=500`;
+  const r = await fetch(url, { headers:{'Accept':'application/json;odata=verbose'}, credentials:'include' });
+  if(!r.ok) throw new Error('Error listando SharePoint: '+r.status);
+  const d = await r.json();
+  return {keys: d.d.results.map(i=>i.Title)};
+}
+
+// ─── STORAGE ABSTRACTION ────────────────────────────────────────────────────
+var store = {
+  async set(key, value){
+    const mode = getStoreMode();
+    if(mode==='gs') return gsSet(key,value);
+    if(mode==='sharepoint') return spSet(key,value);
+    localStorage.setItem('gestion:'+key, value);
+    return {key,value};
+  },
+  async get(key){
+    const mode = getStoreMode();
+    if(mode==='gs'){ try{ return await gsGet(key); }catch(e){ console.error('GS get:',e); return null; } }
+    if(mode==='sharepoint'){ try{ return await spGet(key); }catch(e){ console.error('SP get:',e); return null; } }
+    const v = localStorage.getItem('gestion:'+key);
+    return v?{key,value:v}:null;
+  },
+  async list(prefix){
+    const mode = getStoreMode();
+    if(mode==='gs'){ try{ return await gsList(prefix); }catch(e){ console.error('GS list:',e); return {keys:[]}; } }
+    if(mode==='sharepoint'){ try{ return await spList(prefix); }catch(e){ console.error('SP list:',e); return {keys:[]}; } }
+    const keys=[];
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i);
+      if(k&&k.startsWith('gestion:'+(prefix||''))) keys.push(k.replace('gestion:',''));
+    }
+    return {keys};
+  }
+};
+
+function showStorageBanner(){ updateConnBadge(); }
+
+
+var dayType = 'LJ';
+var currentUser = '';
+var currentDate = todayISO();
+var dayOps = [];
+var planDistribution = {};
+var seguimientoOps = [];
+var availability = {}; // { analystName: true/false (true = available) }
+
+// ─── UTILS ─────────────────────────────────────────────────────────────────
+function todayISO(){
+  const d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,10);
+}
+
+function uid(){ return Math.random().toString(36).slice(2,10); }
+
+function daysElapsed(fechaStr){
+  if(!fechaStr) return -1;
+  const parts = fechaStr.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if(!parts) return -1;
+  const dt = Date.UTC(+parts[1],+parts[2]-1,+parts[3]);
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((today - dt)/86400000);
+}
+
+function classifyTier(fechaStr, slaH){
+  const d = daysElapsed(fechaStr);
+  if(d < 0) return 'normal';
+  const slaDays = Math.ceil(slaH/24);
+  if(d >= slaDays) return 'vencido';
+  if(slaDays >= 2 && d >= slaDays-1) return 'urgente';
+  return 'normal';
+}
+
+function fmtTime(iso){
+  if(!iso) return '—';
+  return new Date(iso).toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});
+}
+
+function fmtDate(iso){ return iso || '—'; }
+
+function roleBadgeClass(name){
+  const t = TEAM.find(x=>x.name===name);
+  if(!t) return '';
+  if(t.products.includes('brasil')) return 'brasil';
+  if(t.reserve) return 'reserva';
+  return '';
+}
+
+function roleLabel(name){
+  const t = TEAM.find(x=>x.name===name);
+  return t ? t.role : name;
+}
+
+function productLabels(name){
+  const t = TEAM.find(x=>x.name===name);
+  if(!t) return '';
+  return t.products.map(k=>PRODUCTS.find(p=>p.key===k)?.name||k).join(' · ');
+}
+
+// ─── AVAILABILITY ───────────────────────────────────────────────────────────
+function initAvailability(){
+  TEAM.forEach(t => { availability[t.name] = !t.reserve; }); // reservas inician inactivos
+  renderAvailGrid();
+}
+
+function toggleAvailability(name){
+  // Don't allow marking everyone absent
+  const presentCount = TEAM.filter(t => availability[t.name] && t.name !== name).length;
+  if(availability[name] && presentCount === 0){
+    alert('Debe haber al menos un analista disponible.');
+    return;
+  }
+  availability[name] = !availability[name];
+  renderAvailGrid();
+  recalcPlan();
+}
+
+function renderAvailGrid(){
+  const grid = document.getElementById('avail-grid');
+  grid.innerHTML = TEAM.map(t => {
+    const present = availability[t.name];
+    const reserveLabel = t.reserve ? ' · Reserva' : '';
+    return `<div class="avail-chip ${present?'present':'absent'}" onclick="toggleAvailability('${t.name}')">
+      <span class="dot"></span>
+      ${t.name}${reserveLabel}
+      <span style="font-size:10px;font-weight:400;">${present?(t.reserve?'✓ activo en peak':'✓ disponible'):'✗ ausente'}</span>
+    </div>`;
+  }).join('');
+}
+
+function buildAbsenceDetail(analysts, absentList){
+  const detail = document.getElementById('absence-detail');
+  if(!absentList.length){ detail.innerHTML=''; return; }
+
+  const rows = absentList.map(name => {
+    const t = TEAM.find(x=>x.name===name);
+    const isLeader = t && t.role.includes('Líder');
+    const product = isLeader ? PRODUCTS.find(p=>p.leader===name) : null;
+    let msg = '';
+    if(product){
+      const totalForProduct = Object.values(analysts).reduce((s,a)=>(a.detail[product.key]||0)+s,0);
+      const topCovers = Object.entries(analysts)
+        .filter(([n,a])=>(a.detail[product.key]||0)>0 && n!==name)
+        .sort((a,b)=>(b[1].detail[product.key]||0)-(a[1].detail[product.key]||0))
+        .map(([n,a])=>`${n} (${a.detail[product.key]})`).join(', ');
+      msg = `Líder de ${product.name}. El volumen (${totalForProduct} ops) se redistribuye entre: ${topCovers||'equipo disponible'}.`;
+    } else {
+      msg = `Analista sin producto asignado en esta sesión — su capacidad (${CAPS[dayType]} ops) se redistribuye automáticamente entre el equipo presente.`;
+    }
+    return `<div class="absence-row"><span class="arrow">→</span><div><b>${name}:</b> ${msg}</div></div>`;
+  }).join('');
+
+  detail.innerHTML = `
+    <div class="absence-alert">
+      <b>Impacto de ausencias detectado:</b>
+      ${rows}
+    </div>`;
+}
+
+
+function goTo(tab){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('page-'+tab).classList.add('active');
+  const tabs = {plan:0,ops:1,seguimiento:2,miturno:3,historial:4};
+  document.querySelectorAll('.nav-tab')[tabs[tab]].classList.add('active');
+  if(tab==='seguimiento') loadSeguimiento();
+  if(tab==='historial') loadHistorial();
+  if(tab==='ops'){ buildOpsEntry(); updateConfirmDateLabel(); }
+  if(tab==='miturno') loadMiTurno();
+}
+
+function updateConfirmDateLabel(){
+  const el = document.getElementById('confirm-date-label');
+  if(el) el.textContent = currentDate;
+}
+
+// ─── USER ───────────────────────────────────────────────────────────────────
+function initUserSelect(){
+  const sel = document.getElementById('user-select');
+  const opts = [JEFE, ...TEAM.map(t=>t.name)];
+  opts.forEach(n=>{
+    const o = document.createElement('option');
+    o.value = n; o.textContent = n;
+    sel.appendChild(o);
+  });
+  const saved = localStorage.getItem('gestion_user');
+  if(saved){ sel.value = saved; currentUser = saved; }
+  // Show/hide Mi turno tab based on user
+  const tab = document.getElementById('mi-turno-tab');
+  if(tab) tab.style.display = (currentUser && currentUser!==JEFE) ? 'flex' : 'none';
+}
+
+function setCurrentUser(v){
+  currentUser = v;
+  localStorage.setItem('gestion_user', v);
+  // Update Mi turno tab visibility (hide from Jefe, show to analysts)
+  const tab = document.getElementById('mi-turno-tab');
+  if(tab) tab.style.display = (v && v!==JEFE) ? 'flex' : 'none';
+  if(document.getElementById('page-miturno').classList.contains('active')) loadMiTurno();
+}
+
+// ─── DATE ───────────────────────────────────────────────────────────────────
+function initDate(){
+  currentDate = todayISO();
+  document.getElementById('date-badge').textContent = currentDate;
+}
+
+// ─── DAY TYPE ───────────────────────────────────────────────────────────────
+function setDayType(t){
+  dayType = t;
+  document.getElementById('btn-lj').classList.toggle('active', t==='LJ');
+  document.getElementById('btn-v').classList.toggle('active', t==='V');
+  recalcPlan();
+}
+
+// ─── PLAN PAGE ──────────────────────────────────────────────────────────────
+function buildProdGrid(){
+  const grid = document.getElementById('prod-grid');
+  grid.innerHTML = PRODUCTS.map(p=>`
+    <div class="prod-card">
+      <div class="pname">${p.name}</div>
+      <div class="pmeta">SLA ${p.slaH}h · ${p.idType} · líder ${p.leader}</div>
+      <input type="number" min="0" id="vol-${p.key}" value="${p.dflt}" oninput="recalcPlan()">
+      <div class="urg-label">Vencen hoy</div>
+      <input type="number" min="0" class="urg" id="urg-${p.key}" value="0" oninput="recalcPlan()">
+    </div>
+  `).join('');
+}
+
+function getVolumes(){
+  const v={};
+  PRODUCTS.forEach(p=>{
+    const total=Math.max(0,+document.getElementById('vol-'+p.key).value||0);
+    let urgent=Math.max(0,+document.getElementById('urg-'+p.key).value||0);
+    if(urgent>total) urgent=total;
+    v[p.key]={total,urgent,normal:total-urgent};
+  });
+  return v;
+}
+
+function assignPool(analysts, items){
+  const risk={};
+  items.sort((a,b)=>a.p.priority-b.p.priority);
+  items.forEach(item=>{
+    let rem=item.amount; if(!rem) return;
+    const isBrasil = item.p.key==='brasil';
+    const pool = isBrasil ? BRASIL_ANALYSTS : CHILE_ANALYSTS;
+
+    // Pass 1: analysts with product affinity (non-reserve), sorted by most spare capacity
+    const affine = Object.values(analysts).filter(a=>{
+      const t = TEAM.find(x=>x.name===a.name);
+      return pool.includes(a.name) && availability[a.name] && !t?.reserve
+          && t?.products.includes(item.p.key) && (a.cap-a.assigned)>0;
+    });
+    affine.sort((a,b)=>(b.cap-b.assigned)-(a.cap-a.assigned));
+    for(const a of affine){
+      if(!rem) break;
+      const take=Math.min(rem,a.cap-a.assigned);
+      a.assigned+=take; a.detail[item.p.key]=(a.detail[item.p.key]||0)+take; rem-=take;
+    }
+
+    // Pass 2: any available analyst without affinity restriction (but still pool), non-reserve
+    while(rem>0){
+      const cands=Object.values(analysts).filter(a=>{
+        const t=TEAM.find(x=>x.name===a.name);
+        return pool.includes(a.name) && availability[a.name] && !t?.reserve && (a.cap-a.assigned)>0;
+      });
+      if(!cands.length) break;
+      cands.sort((a,b)=>(b.cap-b.assigned)-(a.cap-a.assigned));
+      const h=cands[0];
+      const take=Math.min(rem,h.cap-h.assigned);
+      h.assigned+=take; h.detail[item.p.key]=(h.detail[item.p.key]||0)+take; rem-=take;
+    }
+
+    // Pass 3: reserve analysts (Ivan) only if still overflow
+    while(rem>0){
+      const cands=Object.values(analysts).filter(a=>{
+        const t=TEAM.find(x=>x.name===a.name);
+        return pool.includes(a.name) && availability[a.name] && t?.reserve && (a.cap-a.assigned)>0;
+      });
+      if(!cands.length) break;
+      cands.sort((a,b)=>(b.cap-b.assigned)-(a.cap-a.assigned));
+      const h=cands[0];
+      const take=Math.min(rem,h.cap-h.assigned);
+      h.assigned+=take; h.detail[item.p.key]=(h.detail[item.p.key]||0)+take; rem-=take;
+    }
+
+    if(rem>0) risk[item.p.key]=(risk[item.p.key]||0)+rem;
+  });
+  return risk;
+}
+
+function recalcPlan(){
+  const cap=CAPS[dayType];
+  const vols=getVolumes();
+  const analysts={};
+  TEAM.forEach(t=>{
+    analysts[t.name]={
+      name:t.name,
+      cap: availability[t.name] ? (t.name==='Andrea'?CAPS[dayType]:cap) : 0,
+      assigned:0, detail:{}
+    };
+  });
+
+  const absentList=TEAM.filter(t=>!availability[t.name]).map(t=>t.name);
+  const sorted=[...PRODUCTS].sort((a,b)=>a.priority-b.priority);
+  const riskU=assignPool(analysts,sorted.map(p=>({p,amount:vols[p.key].urgent})).filter(i=>i.amount>0));
+  const riskN=assignPool(analysts,sorted.map(p=>({p,amount:vols[p.key].normal})).filter(i=>i.amount>0));
+
+  const totalD=Object.values(vols).reduce((a,b)=>a+b.total,0);
+  const totalUrgent=Object.values(vols).reduce((a,b)=>a+b.urgent,0);
+  const availTeam=TEAM.filter(t=>availability[t.name]);
+  const totalCap=availTeam.reduce((a,t)=>a+(t.name==='Andrea'?CAPS[dayType]:cap),0);
+  const totalAssigned=Object.values(analysts).reduce((a,b)=>a+b.assigned,0);
+  const util=totalCap>0?Math.round((totalAssigned/totalCap)*100):0;
+  const totalRisk=Object.values(riskU).reduce((a,b)=>a+b,0)+Object.values(riskN).reduce((a,b)=>a+b,0);
+
+  planDistribution=JSON.parse(JSON.stringify(analysts));
+
+  const absentBadge=absentList.length>0
+    ? `<div class="stat risk"><div class="snum">${absentList.length}</div><div class="slbl">Ausente${absentList.length>1?'s':''} hoy</div></div>`:'';
+  document.getElementById('stats-row').innerHTML=`
+    <div class="stat"><div class="snum">${totalD}</div><div class="slbl">Operaciones del día</div></div>
+    <div class="stat ${totalUrgent>0?'warn':''}"><div class="snum">${totalUrgent}</div><div class="slbl">Vencen hoy</div></div>
+    <div class="stat ${util>100?'risk':'ok'}"><div class="snum">${util}%</div><div class="slbl">Uso de capacidad</div></div>
+    <div class="stat ${totalRisk>0?'risk':'ok'}"><div class="snum">${totalRisk}</div><div class="slbl">En riesgo SLA</div></div>
+    ${absentBadge}
+  `;
+
+  let alerts='';
+  if(Object.keys(riskU).length) alerts+=`<div class="alert red"><b>Crítico:</b> hay operaciones que vencen hoy sin cubrir — ${Object.entries(riskU).map(([k,n])=>PRODUCTS.find(p=>p.key===k)?.name+' ('+n+')').join(', ')}.</div>`;
+  if(Object.keys(riskN).length) alerts+=`<div class="alert amber"><b>Sin cubrir hoy:</b> ${Object.entries(riskN).map(([k,n])=>PRODUCTS.find(p=>p.key===k)?.name+' ('+n+')').join(', ')}.</div>`;
+  document.getElementById('alert-wrap').innerHTML=alerts;
+
+  buildAbsenceDetail(analysts, absentList);
+
+  document.getElementById('dist-body').innerHTML=TEAM.map(t=>{
+    const a=analysts[t.name];
+    const absent=!availability[t.name];
+    const pct=absent?0:Math.min(100,Math.round((a.assigned/Math.max(a.cap,1))*100));
+    const over=!absent&&a.assigned>a.cap;
+    const bc=over?'over':(pct>=90?'warn':'');
+    const prodBadge = t.reserve
+      ? '<span class="role-badge reserva">Reserva</span>'
+      : t.products.includes('brasil')
+        ? '<span class="role-badge brasil">Brasil</span>'
+        : '';
+    const prodAffinityStr = t.products.map(k=>PRODUCTS.find(p=>p.key===k)?.name||k).join(' · ');
+    const detail=absent
+      ? '<i style="color:var(--red);">Ausente — sin operaciones asignadas</i>'
+      : (Object.entries(a.detail).map(([k,n])=>PRODUCTS.find(p=>p.key===k)?.name+': '+n).join(' · ')||'Sin operaciones asignadas');
+    return `<tr style="${absent?'opacity:.45;':''}">
+      <td>
+        <div class="analyst-name">${t.name}</div>
+        ${prodBadge}
+        ${absent?'<span class="role-badge" style="background:var(--red-light);color:var(--red);margin-left:4px;">Ausente</span>':''}
+        <div style="font-size:10px;color:var(--gray-text);margin-top:3px;">${prodAffinityStr}</div>
+      </td>
+      <td class="breakdown">${detail}</td>
+      <td>
+        ${absent
+          ? '<div style="font-size:12px;color:var(--red);">—</div>'
+          : `<div class="bar-track"><div class="bar-fill ${bc}" style="width:${pct}%"></div></div>
+             <div style="font-size:11px;color:var(--gray-text);margin-top:3px;">${a.assigned}/${a.cap} ops (${pct}%)${over?' · sobre tope':''}</div>`
+        }
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ─── OPS ENTRY PAGE ─────────────────────────────────────────────────────────
+function buildOpsEntry(){
+  const container=document.getElementById('ops-entry-panels');
+
+  // View toggle: by product (default) or by analyst
+  const viewMode = window._opsViewMode || 'product';
+
+  let header = `<div style="display:flex;gap:8px;margin-bottom:14px;align-items:center;">
+    <span style="font-size:12px;color:var(--gray-text);">Ver por:</span>
+    <button class="btn-secondary" style="font-size:12px;padding:5px 12px;${viewMode==='product'?'background:var(--navy);color:var(--white);border-color:var(--navy)':''}"
+      onclick="window._opsViewMode='product';buildOpsEntry()">Producto</button>
+    <button class="btn-secondary" style="font-size:12px;padding:5px 12px;${viewMode==='analyst'?'background:var(--navy);color:var(--white);border-color:var(--navy)':''}"
+      onclick="window._opsViewMode='analyst';buildOpsEntry()">Analista</button>
+  </div>`;
+
+  let body = '';
+
+  if(viewMode === 'product'){
+    body = PRODUCTS.map(p=>{
+      const ops=dayOps.filter(o=>o.productKey===p.key);
+      return `
+        <div class="op-entry-panel" style="margin-bottom:14px;">
+          <div class="prod-header">
+            <div>
+              <span class="prod-name">${p.name}</span>
+              <span class="role-badge ${p.key==='brasil'?'brasil':''}" style="margin-left:8px;">${p.idType}</span>
+            </div>
+            <span class="prod-count" id="count-${p.key}">${ops.length} operaciones cargadas</span>
+          </div>
+          <div id="op-list-${p.key}">${ops.map(o=>opRowHTML(o, p)).join('')}</div>
+          <button class="add-op-btn" onclick="addOp('${p.key}')">+ Agregar ${p.idType}</button>
+        </div>`;
+    }).join('');
+  } else {
+    // View by analyst: group operations per analyst
+    const analysts = [...new Set(dayOps.map(o=>o.analista||'Sin asignar'))].sort();
+    if(!analysts.length){
+      body = '<div style="padding:20px;text-align:center;color:var(--gray-text);font-size:13px;">Aún no hay operaciones cargadas. Agrégalas desde la vista por Producto.</div>';
+    } else {
+      body = analysts.map(analista=>{
+        const myOps = dayOps.filter(o=>(o.analista||'Sin asignar')===analista);
+        const t = TEAM.find(x=>x.name===analista);
+        const prodAffinityStr = t ? t.products.map(k=>PRODUCTS.find(p=>p.key===k)?.name||k).join(' · ') : '';
+        return `
+          <div class="op-entry-panel" style="margin-bottom:14px;">
+            <div class="prod-header">
+              <div>
+                <span class="prod-name">${analista}</span>
+                ${t?.reserve?'<span class="role-badge reserva" style="margin-left:6px;">Reserva</span>':''}
+                ${prodAffinityStr?`<span style="font-size:11px;color:var(--gray-text);margin-left:8px;">${prodAffinityStr}</span>`:''}
+              </div>
+              <span class="prod-count">${myOps.length} operaciones asignadas</span>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:12px;">
+              <thead><tr>
+                <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--gray-line);color:var(--gray-text);">Producto</th>
+                <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--gray-line);color:var(--gray-text);">Identificador</th>
+                <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--gray-line);color:var(--gray-text);">Urgencia</th>
+                <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--gray-line);color:var(--gray-text);">Reasignar</th>
+                <th style="padding:6px 8px;border-bottom:1px solid var(--gray-line);"></th>
+              </tr></thead>
+              <tbody>
+                ${myOps.map(op=>{
+                  const p = PRODUCTS.find(x=>x.key===op.productKey)||{name:op.productName||op.productKey,idType:'ID',key:op.productKey};
+                  const sortedT = TEAM.slice().sort((a,b)=>{
+                    const aA=a.products.includes(p.key)?0:(BRASIL_ANALYSTS.includes(a.name)?3:(a.reserve?2:1));
+                    const bA=b.products.includes(p.key)?0:(BRASIL_ANALYSTS.includes(b.name)?3:(b.reserve?2:1));
+                    return aA-bA;
+                  });
+                  const opts = sortedT.map(t=>{
+                    const avail = availability[t.name];
+                    return `<option value="${t.name}" ${op.analista===t.name?'selected':''} ${!avail&&op.analista!==t.name?'disabled':''}>${t.name}${t.reserve?' (Reserva)':''}${!avail?' — ausente':''}</option>`;
+                  }).join('');
+                  return `<tr style="border-bottom:1px solid var(--gray-line);">
+                    <td style="padding:7px 8px;">${p.name} <span class="role-badge ${p.key==='brasil'?'brasil':''}">${p.idType}</span></td>
+                    <td style="padding:7px 8px;"><input type="text" value="${op.identificador||''}" placeholder="Se completa después" oninput="updateOp('${op.uid}','identificador',this.value)" style="border:none;border-bottom:1px dashed var(--gray-line);background:transparent;font-size:12px;width:140px;outline:none;padding:1px 2px;"></td>
+                    <td style="padding:7px 8px;"><span class="tier-badge ${op.tier}">${op.tier}</span></td>
+                    <td style="padding:7px 8px;"><select onchange="updateOp('${op.uid}','analista',this.value);buildOpsEntry();" style="font-size:12px;padding:4px 6px;border:1px solid var(--gray-line);border-radius:6px;"><option value="">Sin asignar</option>${opts}</select></td>
+                    <td style="padding:7px 8px;"><button class="rm" onclick="removeOpAndRefresh('${op.uid}')">✕</button></td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+            <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+              ${PRODUCTS.filter(p=>p.key!=='brasil'||analista==='Andrea').map(p=>`
+                <button class="add-op-btn" style="width:auto;flex:none;" onclick="addOp('${p.key}','${analista}')">+ ${p.name}</button>
+              `).join('')}
+            </div>
+          </div>`;
+      }).join('');
+    }
+    // Also show product panels for adding new ops (always show)
+    body += `<div class="op-entry-panel" style="margin-bottom:14px;border-color:var(--cyan);">
+      <div class="prod-header"><span class="prod-name" style="color:var(--teal);">Agregar operaciones por producto</span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        ${PRODUCTS.map(p=>`<button class="add-op-btn" style="width:auto;flex:none;" onclick="addOp('${p.key}')">+ ${p.name} (${p.idType})</button>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  container.innerHTML = header + body;
+  // Sync counts for product view
+  PRODUCTS.forEach(p=>{
+    const el = document.getElementById('count-'+p.key);
+    if(el) el.textContent = dayOps.filter(o=>o.productKey===p.key).length+' operaciones cargadas';
+  });
+}
+
+function removeOpAndRefresh(uid){
+  removeOp(uid);
+  buildOpsEntry();
+}
+
+function opRowHTML(op, p){
+  // Todos los analistas en el menú - los afines al producto aparecen primero
+  // Andrea aparece al final para productos Chile y al inicio para Brasil
+  const sorted = TEAM.slice().sort((a,b)=>{
+    const aScore = a.products.includes(p.key)?0 : (BRASIL_ANALYSTS.includes(a.name)?3 : (a.reserve?2:1));
+    const bScore = b.products.includes(p.key)?0 : (BRASIL_ANALYSTS.includes(b.name)?3 : (b.reserve?2:1));
+    return aScore-bScore;
+  });
+  const analystOpts = sorted.map(t=>{
+    const avail = availability[t.name];
+    const label = t.name + (t.reserve?' (Reserva)':'') + (!avail?' — ausente':'');
+    return `<option value="${t.name}" ${op.analista===t.name?'selected':''} ${!avail&&op.analista!==t.name?'disabled':''}>${label}</option>`;
+  }).join('');
+  const placeholder = p.idType==='CPF' ? 'CPF (se puede completar después)' :
+                      p.idType==='ID'  ? 'ID (opcional, puede llegar después)' :
+                                          'RUT (opcional, puede llegar después)';
+  return `<div class="op-row" id="oprow-${op.uid}">
+    <input type="text" value="${op.identificador}" placeholder="${placeholder}" oninput="updateOp('${op.uid}','identificador',this.value)" style="max-width:180px;">
+    <select onchange="updateOp('${op.uid}','analista',this.value)">
+      <option value="">Sin asignar</option>${analystOpts}
+    </select>
+    <span class="tier-badge ${op.tier}">${op.tier}</span>
+    <button class="rm" onclick="removeOp('${op.uid}')">✕</button>
+  </div>`;
+}
+
+function addOp(productKey){
+  const p=PRODUCTS.find(x=>x.key===productKey);
+  const op={uid:uid(), productKey, productName:p.name, identificador:'', analista:'', estado:'PENDIENTE', tier:'normal', fecha_riesgo:'', obs:'', obs_seguimiento:'', asignado_en:new Date().toISOString(), completado_en:null};
+  // Auto-assign based on plan distribution
+  op.analista=autoAssign(productKey);
+  dayOps.push(op);
+  const list=document.getElementById('op-list-'+productKey);
+  const div=document.createElement('div');
+  div.innerHTML=opRowHTML(op,p);
+  list.appendChild(div.firstElementChild);
+  document.getElementById('count-'+productKey).textContent=dayOps.filter(o=>o.productKey===productKey).length+' operaciones cargadas';
+}
+
+function autoAssign(productKey){
+  const pool = productKey==='brasil' ? BRASIL_ANALYSTS : CHILE_ANALYSTS;
+  const cap = CAPS[dayType];
+  const totalByAnalyst={};
+  pool.forEach(n=>{ totalByAnalyst[n]=dayOps.filter(o=>o.analista===n).length; });
+
+  // Priority 1: affine non-reserve analysts with capacity
+  const affine = pool.filter(n=>{
+    const t=TEAM.find(x=>x.name===n);
+    return t && !t.reserve && t.products.includes(productKey) && availability[n] && (totalByAnalyst[n]||0)<cap;
+  });
+  if(affine.length) return affine.sort((a,b)=>(totalByAnalyst[a]||0)-(totalByAnalyst[b]||0))[0];
+
+  // Priority 2: any non-reserve with capacity
+  const any = pool.filter(n=>{
+    const t=TEAM.find(x=>x.name===n);
+    return t && !t.reserve && availability[n] && (totalByAnalyst[n]||0)<cap;
+  });
+  if(any.length) return any.sort((a,b)=>(totalByAnalyst[a]||0)-(totalByAnalyst[b]||0))[0];
+
+  // Priority 3: reserve with capacity
+  const reserve = pool.filter(n=>{
+    const t=TEAM.find(x=>x.name===n);
+    return t && t.reserve && availability[n] && (totalByAnalyst[n]||0)<cap;
+  });
+  return reserve.sort((a,b)=>(totalByAnalyst[a]||0)-(totalByAnalyst[b]||0))[0]||'';
+}
+
+function updateOp(uid, field, value){
+  const op=dayOps.find(o=>o.uid===uid);
+  if(!op) return;
+  op[field]=value;
+  if(field==='fecha_riesgo'){
+    const p=PRODUCTS.find(x=>x.key===op.productKey);
+    op.tier=classifyTier(value, p.slaH);
+    const badge=document.querySelector(`#oprow-${uid} .tier-badge`);
+    if(badge){ badge.className='tier-badge '+op.tier; badge.textContent=op.tier; }
+  }
+  if(field==='identificador'){
+    checkDuplicates();
+  }
+}
+
+function checkDuplicates(){
+  // Map: normalized identifier → list of uids that have it (ignoring blanks)
+  const map={};
+  dayOps.forEach(o=>{
+    const val=(o.identificador||'').trim().replace(/[\.\-\s]/g,'').toLowerCase();
+    if(!val) return;
+    if(!map[val]) map[val]=[];
+    map[val].push(o.uid);
+  });
+
+  dayOps.forEach(o=>{
+    const val=(o.identificador||'').trim().replace(/[\.\-\s]/g,'').toLowerCase();
+    const isDup = val && map[val] && map[val].length > 1;
+    o._isDup = isDup;
+
+    // Update op-row visual in product view
+    const row=document.getElementById('oprow-'+o.uid);
+    if(row){
+      row.classList.toggle('has-dup', isDup);
+      let warn=row.querySelector('.dup-warning');
+      if(isDup){
+        if(!warn){
+          warn=document.createElement('div');
+          warn.className='dup-warning';
+          row.appendChild(warn);
+        }
+        const others=map[val].filter(u=>u!==o.uid)
+          .map(u=>{ const x=dayOps.find(d=>d.uid===u); return x?x.analista||'sin asignar':''; })
+          .filter(Boolean).join(', ');
+        warn.textContent=' Identificador repetido'+( others ? ' — también en: '+others : '');
+      } else if(warn){
+        warn.remove();
+      }
+    }
+  });
+
+  // Update confirm button status
+  const totalDups=dayOps.filter(o=>o._isDup).length;
+  const dupStatusEl=document.getElementById('dup-status');
+  if(dupStatusEl){
+    if(totalDups>0){
+      dupStatusEl.innerHTML=`<span style="color:var(--red);font-size:12px;font-weight:600;">⚠ ${totalDups} operación(es) con identificador repetido. Verifica antes de confirmar.</span>`;
+    } else {
+      dupStatusEl.innerHTML='';
+    }
+  }
+  return totalDups;
+}
+
+function removeOp(uid){
+  const op=dayOps.find(o=>o.uid===uid);
+  if(!op) return;
+  dayOps=dayOps.filter(o=>o.uid!==uid);
+  const row=document.getElementById('oprow-'+uid);
+  if(row) row.remove();
+  document.getElementById('count-'+op.productKey).textContent=dayOps.filter(o=>o.productKey===op.productKey).length+' operaciones cargadas';
+}
+
+async function confirmDay(){
+  const statusEl=document.getElementById('confirm-status');
+
+  // Check for duplicate identifiers before saving
+  const dupCount = checkDuplicates();
+  if(dupCount > 0){
+    const dupList = dayOps.filter(o=>o._isDup)
+      .map(o=>'• '+(o.identificador||'(vacío)')+'  →  '+(o.analista||'sin asignar')+'  ('+o.productName+')')
+      .join('\n');
+    const proceed = window.confirm(
+      '⚠ Hay '+dupCount+' operación(es) con identificadores repetidos:\n\n'+dupList+
+      '\n\n¿Deseas confirmar el reparto de todas formas?'
+    );
+    if(!proceed) return;
+  }
+
+  statusEl.textContent='Guardando...';
+  try{
+    const vols=getVolumes();
+    await store.set('ops:'+currentDate, JSON.stringify(dayOps));
+    await store.set('meta:'+currentDate, JSON.stringify({
+      date:currentDate, dayType, volumes:vols, distribution:planDistribution,
+      confirmedAt:new Date().toISOString(), confirmedBy:currentUser||'—',
+      totalOps:dayOps.length
+    }));
+    statusEl.textContent='✓ Reparto guardado el '+new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'})+'. Accesible para todo el equipo.';
+    statusEl.style.color='var(--teal)';
+    // Escribir registro plano en RegistroHistorico (solo modo Google Sheets)
+    gsLogRows(dayOps, currentUser, currentDate);
+  } catch(e){
+    statusEl.textContent='Error al guardar: '+e.message;
+    statusEl.style.color='var(--red)';
+  }
+}
+
+// ─── SEGUIMIENTO PAGE ───────────────────────────────────────────────────────
+async function loadSeguimiento(){
+  document.getElementById('seg-body').innerHTML='<tr><td colspan="6" class="loading">Cargando...</td></tr>';
+  document.getElementById('seg-empty').innerHTML='';
+  try{
+    const r=await store.get('ops:'+currentDate);
+    seguimientoOps=r&&r.value?JSON.parse(r.value):[];
+  } catch(e){ seguimientoOps=[]; }
+  populateFilters();
+  renderSeguimiento();
+}
+
+function populateFilters(){
+  const fa=document.getElementById('filter-analista');
+  const fp=document.getElementById('filter-producto');
+  const prev_a=fa.value, prev_p=fp.value;
+  fa.innerHTML='<option value="">Todos los analistas</option>';
+  fp.innerHTML='<option value="">Todos los productos</option>';
+  const analysts=[...new Set(seguimientoOps.map(o=>o.analista).filter(Boolean))].sort();
+  const prods=[...new Set(seguimientoOps.map(o=>o.productKey))];
+  analysts.forEach(n=>{const o=document.createElement('option');o.value=n;o.textContent=n;fa.appendChild(o);});
+  prods.forEach(k=>{const p=PRODUCTS.find(x=>x.key===k);if(p){const o=document.createElement('option');o.value=k;o.textContent=p.name;fp.appendChild(o);}});
+  fa.value=prev_a; fp.value=prev_p;
+}
+
+function renderSeguimiento(){
+  const fa=document.getElementById('filter-analista').value;
+  const fe=document.getElementById('filter-estado').value;
+  const fp=document.getElementById('filter-producto').value;
+  let ops=seguimientoOps.filter(o=>
+    (!fa||o.analista===fa)&&(!fe||o.estado===fe)&&(!fp||o.productKey===fp)
+  );
+
+  const total=seguimientoOps.length;
+  const hechos=seguimientoOps.filter(o=>o.estado==='HECHO').length;
+  const pct=total>0?Math.round((hechos/total)*100):0;
+  document.getElementById('seg-stats').innerHTML=`
+    <div class="stat"><div class="snum">${total}</div><div class="slbl">Total del día</div></div>
+    <div class="stat ok"><div class="snum">${hechos}</div><div class="slbl">Hechas</div></div>
+    <div class="stat ${total-hechos>0?'warn':'ok'}"><div class="snum">${total-hechos}</div><div class="slbl">Pendientes</div></div>
+    <div class="stat ${pct<50?'warn':'ok'}"><div class="snum">${pct}%</div><div class="slbl">Avance</div></div>
+  `;
+
+  if(ops.length===0){
+    document.getElementById('seg-body').innerHTML='';
+    document.getElementById('seg-empty').innerHTML='<div class="empty">No hay operaciones que coincidan con el filtro, o aún no se ha confirmado el reparto del día.</div>';
+    return;
+  }
+  document.getElementById('seg-empty').innerHTML='';
+
+  const tierOrder={vencido:0,urgente:1,normal:2};
+  ops.sort((a,b)=>tierOrder[a.tier]-tierOrder[b.tier]||(a.analista||'').localeCompare(b.analista||''));
+
+  const canEdit=(op)=>{
+    // Sin usuario seleccionado = modo Jefe (equipo de confianza)
+    if(!currentUser || currentUser===JEFE) return true;
+    return op.analista===currentUser;
+  };
+
+  document.getElementById('seg-body').innerHTML=ops.map(op=>{
+    const editable=canEdit(op);
+    const estadoBtn=`<button class="estado-btn ${op.estado}" onclick="toggleEstado('${op.uid}')" title="${editable?'Haz clic para cambiar el estado':'Solo puedes cambiar el estado de tus propias operaciones'}" style="${!editable?'opacity:.5;cursor:not-allowed;':''}">${op.estado}</button>`;
+    return `<tr>
+      <td class="breakdown">${op.productName}</td>
+      <td class="breakdown">
+        ${op.identificador||'—'}
+        ${op._isDup?'<div class="dup-warning"> Repetido</div>':''}
+      </td>
+      <td><div class="analyst-name" style="font-size:13px;">${op.analista||'—'}</div></td>
+      <td><span class="tier-badge ${op.tier}">${op.tier}</span></td>
+      <td>${estadoBtn}</td>
+      <td class="breakdown">${op.estado==='HECHO'?fmtTime(op.completado_en):'—'}</td>
+      <td style="min-width:160px;">
+        <textarea class="obs-field" rows="1"
+          placeholder="Agregar observación..."
+          ${!editable?'style="opacity:.5;pointer-events:none;"':''}
+          onblur="saveObs('${op.uid}',this.value)"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();this.blur();}"
+          title="Enter para guardar, Shift+Enter para nueva línea"
+        >${op.obs_seguimiento||''}</textarea>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function toggleEstado(uid){
+  const op=seguimientoOps.find(o=>o.uid===uid);
+  if(!op){ alert('Operación no encontrada. Haz clic en "Actualizar" e intenta de nuevo.'); return; }
+  // Sin usuario seleccionado = modo Jefe; de lo contrario solo el dueño puede cambiar
+  const canEdit = !currentUser || currentUser===JEFE || op.analista===currentUser;
+  if(!canEdit){
+    alert('Solo puedes cambiar el estado de operaciones asignadas a ti ('+currentUser+'). Esta operación está asignada a: '+op.analista+'.');
+    return;
+  }
+  op.estado=op.estado==='PENDIENTE'?'HECHO':'PENDIENTE';
+  op.completado_en=op.estado==='HECHO'?new Date().toISOString():null;
+  try{
+    await store.set('ops:'+currentDate, JSON.stringify(seguimientoOps));
+    dayOps=seguimientoOps.map(o=>({...o})); // sync local copy
+    // Actualizar fila en RegistroHistorico
+    gsLogRows([op], op.analista||currentUser, currentDate);
+    renderSeguimiento();
+  } catch(e){
+    alert('Error al guardar el estado: '+e.message);
+    op.estado=op.estado==='HECHO'?'PENDIENTE':'HECHO'; // revert
+  }
+}
+
+// ─── HISTORIAL PAGE ──────────────────────────────────────────────────────────
+async function loadHistorial(){
+  const container=document.getElementById('hist-body');
+  container.innerHTML='<div class="loading">Cargando historial...</div>';
+  let keys=[];
+  try{ const r=await store.list('meta:'); keys=r&&r.keys?r.keys:[]; }
+  catch(e){ container.innerHTML='<div class="empty">No se pudo cargar el historial.</div>'; return; }
+
+  const metas=[];
+  for(const k of keys){
+    try{ const r=await store.get(k); if(r&&r.value) metas.push(JSON.parse(r.value)); }
+    catch(e){}
+  }
+  metas.sort((a,b)=>b.date.localeCompare(a.date));
+
+  if(!metas.length){ container.innerHTML='<div class="empty">Todavía no hay repartos confirmados.</div>'; return; }
+
+  const rows=await Promise.all(metas.map(async meta=>{
+    let ops=[];
+    try{ const r=await store.get('ops:'+meta.date); if(r&&r.value) ops=JSON.parse(r.value); }catch(e){}
+    const hechos=ops.filter(o=>o.estado==='HECHO').length;
+    const pct=ops.length>0?Math.round((hechos/ops.length)*100):0;
+    const dayLabel=meta.dayType==='LJ'?'Lun–Jue':'Viernes';
+    return `<div class="hist-row">
+      <div class="hist-date">${meta.date}</div>
+      <div class="hist-meta">${dayLabel} · ${meta.totalOps} ops · confirmado por ${meta.confirmedBy||'—'}</div>
+      <div class="prog-bar">
+        <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:var(--teal);"></div></div>
+        <div style="font-size:11px;color:var(--gray-text);margin-top:3px;">${hechos}/${ops.length} hechos (${pct}%)</div>
+      </div>
+      <button class="btn-secondary" style="font-size:12px;padding:6px 12px;" onclick="verDia('${meta.date}')">Ver detalle</button>
+    </div>`;
+  }));
+  container.innerHTML=rows.join('');
+}
+
+async function verDia(date){
+  try{
+    const r=await store.get('ops:'+date);
+    seguimientoOps=r&&r.value?JSON.parse(r.value):[];
+    currentDate=date;
+    document.getElementById('date-badge').textContent=date;
+    goTo('seguimiento');
+  } catch(e){ alert('No se pudieron cargar las operaciones de ese día.'); }
+}
+
+
+// ─── MI TURNO PAGE ───────────────────────────────────────────────────────────
+async function loadMiTurno(){
+  const subtitle = document.getElementById('miturno-subtitle');
+  const cards = document.getElementById('miturno-cards');
+  const empty = document.getElementById('miturno-empty');
+  const stats = document.getElementById('miturno-stats');
+
+  if(!currentUser || currentUser === JEFE){
+    cards.innerHTML='';
+    empty.innerHTML=`<div class="no-user-msg">
+      ${!currentUser
+        ? 'Selecciona tu nombre en la esquina superior derecha para ver tus operaciones.'
+        : 'Como Jefe de Riesgo, usa la pestaña <b>Seguimiento</b> para ver y gestionar las operaciones del equipo.'}
+    </div>`;
+    stats.innerHTML='';
+    if(subtitle) subtitle.textContent='';
+    return;
+  }
+
+  empty.innerHTML='<div class="loading">Cargando...</div>';
+  cards.innerHTML='';
+
+  try{
+    const r = await store.get('ops:'+currentDate);
+    seguimientoOps = r&&r.value ? JSON.parse(r.value) : [];
+  } catch(e){ seguimientoOps=[]; }
+
+  const myOps = seguimientoOps.filter(o => o.analista === currentUser);
+  const hechos = myOps.filter(o=>o.estado==='HECHO').length;
+  const pendientes = myOps.filter(o=>o.estado==='PENDIENTE').length;
+
+  if(subtitle) subtitle.textContent = currentUser + ' · ' + currentDate;
+
+  stats.innerHTML = `
+    <div class="stat"><div class="snum">${myOps.length}</div><div class="slbl">Mis operaciones</div></div>
+    <div class="stat ${hechos>0?'ok':''}"><div class="snum">${hechos}</div><div class="slbl">Realizadas</div></div>
+    <div class="stat ${pendientes>0?'warn':'ok'}"><div class="snum">${pendientes}</div><div class="slbl">Pendientes</div></div>
+  `;
+
+  if(!myOps.length){
+    empty.innerHTML='<div class="empty">No tienes operaciones asignadas para hoy. Si el reparto del día aún no fue confirmado, consulta al Jefe de Riesgo.</div>';
+    return;
+  }
+  empty.innerHTML='';
+
+  const tierOrder={vencido:0,urgente:1,normal:2};
+  const sorted = [...myOps].sort((a,b)=>tierOrder[a.tier]-tierOrder[b.tier]);
+
+  cards.innerHTML = sorted.map(op=>{
+    const p = PRODUCTS.find(x=>x.key===op.productKey)||{name:op.productName||op.productKey,idType:'ID'};
+    const idValue = op.identificador||'';
+    const idPlaceholder = p.idType==='CPF'?'CPF (completar cuando llegue)':
+                          p.idType==='ID'?'ID (completar cuando llegue)':'RUT (completar cuando llegue)';
+    return `<div class="op-card ${op.estado==='HECHO'?'hecho':''}" id="card-${op.uid}">
+      <div class="op-info">
+        <div class="op-prod">${p.name} <span class="tier-badge ${op.tier}">${op.tier}</span></div>
+        <div class="op-id">
+          ${p.idType}: <input type="text" value="${idValue}" placeholder="${idPlaceholder}"
+            onblur="saveIdentificador('${op.uid}',this.value)"
+            onkeydown="if(event.key==='Enter')this.blur()">
+        </div>
+        ${op.estado==='HECHO'?`<div style="font-size:11px;color:var(--teal);margin-top:4px;">✓ Realizada a las ${fmtTime(op.completado_en)}</div>`:''}
+        <div class="obs-wrap">
+          <div class="obs-label">Observación</div>
+          <textarea class="obs-field" rows="2"
+            placeholder="Opcional — escribe aquí cualquier nota sobre esta operación..."
+            onblur="saveObs('${op.uid}',this.value)"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();this.blur();}"
+          >${op.obs_seguimiento||''}</textarea>
+        </div>
+      </div>
+      <button class="estado-big ${op.estado}" onclick="toggleEstadoMiTurno('${op.uid}')">
+        ${op.estado==='PENDIENTE'?'Marcar como hecha':'✓ Realizada — deshacer'}
+      </button>
+    </div>`;
+  }).join('');
+}
+
+async function toggleEstadoMiTurno(uid){
+  const op = seguimientoOps.find(o=>o.uid===uid);
+  if(!op) return;
+  const canEditMi = !currentUser || currentUser===JEFE || op.analista===currentUser;
+  if(!canEditMi){
+    alert('Solo puedes cambiar el estado de operaciones asignadas a ti ('+currentUser+'). Esta operación está asignada a: '+op.analista+'.');
+    return;
+  }
+  op.estado = op.estado==='PENDIENTE'?'HECHO':'PENDIENTE';
+  op.completado_en = op.estado==='HECHO'?new Date().toISOString():null;
+  dayOps = seguimientoOps.map(o=>({...o}));
+  try{
+    await store.set('ops:'+currentDate, JSON.stringify(seguimientoOps));
+    gsLogRows([op], op.analista||currentUser, currentDate);
+    loadMiTurno(); // re-render
+  } catch(e){
+    alert('Error al guardar: '+e.message);
+    op.estado = op.estado==='HECHO'?'PENDIENTE':'HECHO'; // revert
+  }
+}
+
+async function saveIdentificador(uid, value){
+  const op = seguimientoOps.find(o=>o.uid===uid);
+  if(!op || op.identificador===value) return;
+  op.identificador = value;
+  const dayOp = dayOps.find(o=>o.uid===uid);
+  if(dayOp){ dayOp.identificador = value; checkDuplicates(); }
+  // Check duplicates in seguimientoOps too
+  checkDupsInSeguimiento();
+  try{
+    await store.set('ops:'+currentDate, JSON.stringify(seguimientoOps));
+  } catch(e){ console.error('Error saving identificador:', e); }
+}
+
+function checkDupsInSeguimiento(){
+  // Same logic but for seguimientoOps (following / Mi turno pages)
+  const map={};
+  seguimientoOps.forEach(o=>{
+    const val=(o.identificador||'').trim().replace(/[\.\-\s]/g,'').toLowerCase();
+    if(!val) return;
+    if(!map[val]) map[val]=[];
+    map[val].push(o.uid);
+  });
+  seguimientoOps.forEach(o=>{
+    const val=(o.identificador||'').trim().replace(/[\.\-\s]/g,'').toLowerCase();
+    o._isDup = val && map[val] && map[val].length > 1;
+  });
+}
+
+// ─── OBSERVACIONES ──────────────────────────────────────────────────────────
+async function saveObs(uid, value){
+  // Save in seguimientoOps
+  const op = seguimientoOps.find(o=>o.uid===uid);
+  if(!op || op.obs_seguimiento === value) return;
+  op.obs_seguimiento = value;
+  // Sync to dayOps too
+  const dayOp = dayOps.find(o=>o.uid===uid);
+  if(dayOp) dayOp.obs_seguimiento = value;
+  try{
+    await store.set('ops:'+currentDate, JSON.stringify(seguimientoOps));
+    gsLogRows([op], op.analista||currentUser, currentDate);
+  } catch(e){ console.error('Error saving obs:', e); }
+}
+
+// ─── INIT ───────────────────────────────────────────────────────────────────
+initDate();
+initUserSelect();
+initAvailability();
+buildProdGrid();
+recalcPlan();
+showStorageBanner();
+updateConfirmDateLabel();
+updateConfirmDateLabel();
+</script>
+</body>
+</html>
