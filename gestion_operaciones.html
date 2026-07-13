@@ -714,8 +714,12 @@ async function testSpConnection(){
 // ─── GOOGLE SHEETS REST API ─────────────────────────────────────────────────
 async function gsCall(action, params){
   const payload = JSON.stringify({action, ...params});
-  const r = await fetch(GS_CONFIG.scriptUrl, {method:'POST', body:payload});
-  if(!r.ok) throw new Error('Error HTTP '+r.status+'. Verifica que el script esté publicado.');
+  const r = await fetch(GS_CONFIG.scriptUrl, {
+    method:'POST',
+    body:payload,
+    credentials:'include' // incluye cookies de sesión Google Workspace (creditu.com)
+  });
+  if(!r.ok) throw new Error('Error HTTP '+r.status+'. Verifica que el script esté publicado y que estés logueado con tu cuenta @creditu.com.');
   return r.json();
 }
 
