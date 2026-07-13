@@ -260,6 +260,8 @@ tr:last-child td{border-bottom:none;}
       <div class="panel-title" style="margin-bottom:0;">Cargar operaciones del día</div>
       <span class="hint" style="margin:0;">Ingresa RUT, ID o CPF de cada operación. El sistema asigna automáticamente; puedes cambiar la asignación.</span>
     </div>
+    <div id="draft-badge" style="display:none;background:var(--amber-light);color:var(--amber);border:1px solid var(--amber);border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;margin-bottom:14px;align-items:center;gap:8px;">
+    </div>
     <div id="ops-entry-panels"></div>
     <div id="dup-status" style="margin-bottom:8px;"></div>
     <div class="btn-row" id="confirm-btn-row">
@@ -274,7 +276,10 @@ tr:last-child td{border-bottom:none;}
   <div class="panel">
     <div class="flex-between" style="margin-bottom:12px;">
       <div class="panel-title" style="margin-bottom:0;">Seguimiento del día</div>
-      <button class="btn-secondary" onclick="loadSeguimiento()" style="font-size:12px;padding:6px 12px;">Actualizar</button>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span id="refresh-badge" style="font-size:11px;color:var(--gray-text);"></span>
+        <button class="btn-secondary" onclick="loadSeguimiento()" style="font-size:12px;padding:6px 12px;">Actualizar</button>
+      </div>
     </div>
     <div style="background:var(--cyan-light);border:1px solid var(--cyan);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--teal);">
       <b>Para marcar una operación como realizada:</b> haz clic en el botón de estado (columna "Estado") — alterna entre
@@ -957,7 +962,7 @@ function goTo(tab){
   document.querySelectorAll('.nav-tab')[tabs[tab]].classList.add('active');
   if(tab==='seguimiento') loadSeguimiento();
   if(tab==='historial') loadHistorial();
-  if(tab==='ops'){ buildOpsEntry(); updateConfirmDateLabel(); }
+  if(tab==='ops'){ buildOpsEntry(); updateConfirmDateLabel(); updateDraftBadge(); }
   if(tab==='miturno') loadMiTurno();
 }
 
@@ -1299,6 +1304,42 @@ function opRowHTML(op, p){
   </div>`;
 }
 
+// ─── BORRADOR AUTOMÁTICO ─────────────────────────────────────────────────────
+function saveDraft(){
+  try{
+    localStorage.setItem('draft:ops:'+currentDate, JSON.stringify(dayOps));
+    localStorage.setItem('draft:date', currentDate);
+    updateDraftBadge();
+  } catch(e){}
+}
+
+function loadDraft(){
+  try{
+    const savedDate = localStorage.getItem('draft:date');
+    if(savedDate !== currentDate) return false; // borrador de otro día
+    const v = localStorage.getItem('draft:ops:'+currentDate);
+    if(!v) return false;
+    const ops = JSON.parse(v);
+    if(!ops || !ops.length) return false;
+    dayOps = ops;
+    return true;
+  } catch(e){ return false; }
+}
+
+function clearDraft(){
+  localStorage.removeItem('draft:ops:'+currentDate);
+  localStorage.removeItem('draft:date');
+  updateDraftBadge();
+}
+
+function updateDraftBadge(){
+  const badge = document.getElementById('draft-badge');
+  if(!badge) return;
+  const hasDraft = dayOps.length > 0;
+  badge.style.display = hasDraft ? 'inline-flex' : 'none';
+  badge.textContent = '● Borrador: '+dayOps.length+' op'+(dayOps.length!==1?'s':'')+' sin confirmar';
+}
+
 function addOp(productKey){
   const p=PRODUCTS.find(x=>x.key===productKey);
   const op={uid:uid(), productKey, productName:p.name, identificador:'', analista:'', estado:'PENDIENTE', tier:'normal', fecha_riesgo:'', obs:'', obs_seguimiento:'', asignado_en:new Date().toISOString(), completado_en:null};
@@ -1310,6 +1351,7 @@ function addOp(productKey){
   div.innerHTML=opRowHTML(op,p);
   list.appendChild(div.firstElementChild);
   document.getElementById('count-'+productKey).textContent=dayOps.filter(o=>o.productKey===productKey).length+' operaciones cargadas';
+  saveDraft();
 }
 
 function autoAssign(productKey){
@@ -1353,6 +1395,7 @@ function updateOp(uid, field, value){
   if(field==='identificador'){
     checkDuplicates();
   }
+  saveDraft();
 }
 
 function checkDuplicates(){
@@ -1411,6 +1454,7 @@ function removeOp(uid){
   const row=document.getElementById('oprow-'+uid);
   if(row) row.remove();
   document.getElementById('count-'+op.productKey).textContent=dayOps.filter(o=>o.productKey===op.productKey).length+' operaciones cargadas';
+  saveDraft();
 }
 
 async function confirmDay(){
@@ -1440,7 +1484,7 @@ async function confirmDay(){
     }));
     statusEl.textContent='✓ Reparto guardado el '+new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'})+'. Accesible para todo el equipo.';
     statusEl.style.color='var(--teal)';
-    // Escribir registro plano en RegistroHistorico (solo modo Google Sheets)
+    clearDraft(); // borrador ya no necesario
     gsLogRows(dayOps, currentUser, currentDate);
   } catch(e){
     statusEl.textContent='Error al guardar: '+e.message;
@@ -1449,13 +1493,52 @@ async function confirmDay(){
 }
 
 // ─── SEGUIMIENTO PAGE ───────────────────────────────────────────────────────
+// Guarda copia local de los ops del día (respaldo inmediato)
+function saveLocalBackup(ops){
+  try{ localStorage.setItem('backup:ops:'+currentDate, JSON.stringify(ops)); } catch(e){}
+}
+function loadLocalBackup(){
+  try{
+    const v = localStorage.getItem('backup:ops:'+currentDate);
+    return v ? JSON.parse(v) : null;
+  } catch(e){ return null; }
+}
+
+// Merge: ante un conflicto entre GS y local, gana el que tiene HECHO más reciente
+function mergeOps(gsOps, localOps){
+  // Si GS devuelve vacío pero hay backup local → mantener backup (GS puede estar lento)
+  if(!gsOps || !gsOps.length) return localOps || [];
+  // Si no hay backup local → usar GS tal cual
+  if(!localOps || !localOps.length) return gsOps;
+  // Ambos tienen datos → fusionar favoreciendo HECHO local sobre PENDIENTE en GS
+  const localMap = {};
+  localOps.forEach(o=>{ localMap[o.uid]=o; });
+  return gsOps.map(op=>{
+    const local = localMap[op.uid];
+    if(!local) return op;
+    // Si local tiene HECHO y GS tiene PENDIENTE → local gana (GS aún no sincronizó)
+    if(local.estado==='HECHO' && op.estado==='PENDIENTE') return {...op, estado:'HECHO', completado_en:local.completado_en, obs_seguimiento:local.obs_seguimiento||op.obs_seguimiento};
+    // Si local tiene obs y GS no → usar obs local
+    if(local.obs_seguimiento && !op.obs_seguimiento) return {...op, obs_seguimiento:local.obs_seguimiento};
+    return op;
+  });
+}
+
 async function loadSeguimiento(){
-  document.getElementById('seg-body').innerHTML='<tr><td colspan="6" class="loading">Cargando...</td></tr>';
+  document.getElementById('seg-body').innerHTML='<tr><td colspan="7" class="loading">Cargando...</td></tr>';
   document.getElementById('seg-empty').innerHTML='';
+  const backup = loadLocalBackup();
   try{
     const r=await store.get('ops:'+currentDate);
-    seguimientoOps=r&&r.value?JSON.parse(r.value):[];
-  } catch(e){ seguimientoOps=[]; }
+    const gsOps = r&&r.value?JSON.parse(r.value):[];
+    // Merge GS data con backup local para no perder estados HECHO pendientes de sync
+    seguimientoOps = mergeOps(gsOps, backup);
+    // Actualizar backup con el merge resultante
+    saveLocalBackup(seguimientoOps);
+  } catch(e){
+    // Si GS falla, usar backup local
+    seguimientoOps = backup || seguimientoOps || [];
+  }
   populateFilters();
   renderSeguimiento();
 }
@@ -1502,14 +1585,15 @@ function renderSeguimiento(){
   ops.sort((a,b)=>tierOrder[a.tier]-tierOrder[b.tier]||(a.analista||'').localeCompare(b.analista||''));
 
   const canEdit=(op)=>{
-    // Sin usuario seleccionado = modo Jefe (equipo de confianza)
-    if(!currentUser || currentUser===JEFE) return true;
+    if(!currentUser) return true;
+    const u = currentUser.trim().toLowerCase();
+    if(u === JEFE.toLowerCase() || u === 'jefe' || u === 'jefe de riesgo') return true;
     return op.analista===currentUser;
   };
 
   document.getElementById('seg-body').innerHTML=ops.map(op=>{
     const editable=canEdit(op);
-    const estadoBtn=`<button class="estado-btn ${op.estado}" onclick="toggleEstado('${op.uid}')" title="${editable?'Haz clic para cambiar el estado':'Solo puedes cambiar el estado de tus propias operaciones'}" style="${!editable?'opacity:.5;cursor:not-allowed;':''}">${op.estado}</button>`;
+    const estadoBtn=`<button class="estado-btn ${op.estado}" onclick="toggleEstado('${op.uid}')" title="Haz clic para cambiar el estado">${op.estado}</button>`;
     return `<tr>
       <td class="breakdown">${op.productName}</td>
       <td class="breakdown">
@@ -1536,24 +1620,24 @@ function renderSeguimiento(){
 async function toggleEstado(uid){
   const op=seguimientoOps.find(o=>o.uid===uid);
   if(!op){ alert('Operación no encontrada. Haz clic en "Actualizar" e intenta de nuevo.'); return; }
-  // Sin usuario seleccionado = modo Jefe; de lo contrario solo el dueño puede cambiar
-  const canEdit = !currentUser || currentUser===JEFE || op.analista===currentUser;
+  const u = (currentUser||'').trim().toLowerCase();
+  const canEdit = !currentUser || u===JEFE.toLowerCase() || u==='jefe' || u==='jefe de riesgo' || op.analista===currentUser;
   if(!canEdit){
     alert('Solo puedes cambiar el estado de operaciones asignadas a ti ('+currentUser+'). Esta operación está asignada a: '+op.analista+'.');
     return;
   }
+  // Cambio optimista: actualiza en memoria y renderiza INMEDIATAMENTE
   op.estado=op.estado==='PENDIENTE'?'HECHO':'PENDIENTE';
   op.completado_en=op.estado==='HECHO'?new Date().toISOString():null;
-  try{
-    await store.set('ops:'+currentDate, JSON.stringify(seguimientoOps));
-    dayOps=seguimientoOps.map(o=>({...o})); // sync local copy
-    // Actualizar fila en RegistroHistorico
-    gsLogRows([op], op.analista||currentUser, currentDate);
-    renderSeguimiento();
-  } catch(e){
-    alert('Error al guardar el estado: '+e.message);
-    op.estado=op.estado==='HECHO'?'PENDIENTE':'HECHO'; // revert
-  }
+  dayOps=seguimientoOps.map(o=>({...o}));
+  // Guardar backup local al instante (no espera GS)
+  saveLocalBackup(seguimientoOps);
+  // Renderizar ANTES de esperar GS
+  renderSeguimiento();
+  // Guardar en GS en segundo plano
+  store.set('ops:'+currentDate, JSON.stringify(seguimientoOps))
+    .then(()=>{ gsLogRows([op], op.analista||currentUser, currentDate); })
+    .catch(e=>{ console.error('Error guardando en GS (cambio preservado localmente):', e); });
 }
 
 // ─── HISTORIAL PAGE ──────────────────────────────────────────────────────────
@@ -1625,10 +1709,17 @@ async function loadMiTurno(){
   empty.innerHTML='<div class="loading">Cargando...</div>';
   cards.innerHTML='';
 
+  const backup = loadLocalBackup();
   try{
     const r = await store.get('ops:'+currentDate);
-    seguimientoOps = r&&r.value ? JSON.parse(r.value) : [];
-  } catch(e){ seguimientoOps=[]; }
+    const gsOps = r&&r.value ? JSON.parse(r.value) : [];
+    // Merge con backup local — nunca pierde HECHO aunque GS tenga PENDIENTE
+    seguimientoOps = mergeOps(gsOps, backup || seguimientoOps);
+    saveLocalBackup(seguimientoOps);
+  } catch(e){
+    // Si GS falla, usar backup local o lo que ya había en memoria
+    seguimientoOps = backup || seguimientoOps || [];
+  }
 
   const myOps = seguimientoOps.filter(o => o.analista === currentUser);
   const hechos = myOps.filter(o=>o.estado==='HECHO').length;
@@ -1684,7 +1775,8 @@ async function loadMiTurno(){
 async function toggleEstadoMiTurno(uid){
   const op = seguimientoOps.find(o=>o.uid===uid);
   if(!op) return;
-  const canEditMi = !currentUser || currentUser===JEFE || op.analista===currentUser;
+  const uMi = (currentUser||'').trim().toLowerCase();
+  const canEditMi = !currentUser || uMi===JEFE.toLowerCase() || uMi==='jefe' || uMi==='jefe de riesgo' || op.analista===currentUser;
   if(!canEditMi){
     alert('Solo puedes cambiar el estado de operaciones asignadas a ti ('+currentUser+'). Esta operación está asignada a: '+op.analista+'.');
     return;
@@ -1692,14 +1784,14 @@ async function toggleEstadoMiTurno(uid){
   op.estado = op.estado==='PENDIENTE'?'HECHO':'PENDIENTE';
   op.completado_en = op.estado==='HECHO'?new Date().toISOString():null;
   dayOps = seguimientoOps.map(o=>({...o}));
-  try{
-    await store.set('ops:'+currentDate, JSON.stringify(seguimientoOps));
-    gsLogRows([op], op.analista||currentUser, currentDate);
-    loadMiTurno(); // re-render
-  } catch(e){
-    alert('Error al guardar: '+e.message);
-    op.estado = op.estado==='HECHO'?'PENDIENTE':'HECHO'; // revert
-  }
+  // Guardar backup local inmediato
+  saveLocalBackup(seguimientoOps);
+  // Re-renderizar inmediatamente
+  loadMiTurno();
+  // Guardar en GS en segundo plano
+  store.set('ops:'+currentDate, JSON.stringify(seguimientoOps))
+    .then(()=>{ gsLogRows([op], op.analista||currentUser, currentDate); })
+    .catch(e=>{ console.error('Error guardando en GS (preservado localmente):', e); });
 }
 
 async function saveIdentificador(uid, value){
@@ -1754,6 +1846,49 @@ recalcPlan();
 showStorageBanner();
 updateConfirmDateLabel();
 updateConfirmDateLabel();
+// Cargar borrador del día si existe
+if(loadDraft()){
+  console.log('Borrador cargado:', dayOps.length, 'operaciones');
+}
+
+// ─── AUTO-REFRESH CADA 2 MINUTOS ─────────────────────────────────────────────
+var _lastRefresh = Date.now();
+setInterval(async function(){
+  // Solo recarga si la página activa es Seguimiento o Mi turno
+  const segActive = document.getElementById('page-seguimiento').classList.contains('active');
+  const miTurnoActive = document.getElementById('page-miturno').classList.contains('active');
+  if(!segActive && !miTurnoActive) return;
+  // No interrumpir si el usuario acaba de hacer algo (< 10 seg)
+  if(Date.now() - _lastRefresh < 10000) return;
+  if(segActive) await silentRefreshSeguimiento();
+  if(miTurnoActive) await loadMiTurno();
+}, 120000); // 2 minutos
+
+// Registrar actividad del usuario para no interrumpir mientras trabaja
+['click','keydown'].forEach(ev => document.addEventListener(ev, ()=>{ _lastRefresh = Date.now(); }));
+
+async function silentRefreshSeguimiento(){
+  // Recarga desde GS sin mostrar "Cargando..." (no interrumpe la vista)
+  const backup = loadLocalBackup();
+  try{
+    const r = await store.get('ops:'+currentDate);
+    const gsOps = r&&r.value ? JSON.parse(r.value) : [];
+    // Si GS devuelve vacío, no borrar lo que ya tienen los analistas
+    if(!gsOps.length && seguimientoOps.length) return;
+    const merged = mergeOps(gsOps, backup || seguimientoOps);
+    // Solo actualizar si hay cambios reales (evita re-render innecesario)
+    const changed = JSON.stringify(merged) !== JSON.stringify(seguimientoOps);
+    if(changed){
+      seguimientoOps = merged;
+      saveLocalBackup(seguimientoOps);
+      populateFilters();
+      renderSeguimiento();
+      // Mostrar indicador sutil de actualización
+      const badge = document.getElementById('refresh-badge');
+      if(badge){ badge.textContent = 'Actualizado ' + new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'}); }
+    }
+  } catch(e){ /* silencioso — no molestar al usuario si GS falla */ }
+}
 </script>
 </body>
 </html>
