@@ -276,10 +276,7 @@ tr:last-child td{border-bottom:none;}
   <div class="panel">
     <div class="flex-between" style="margin-bottom:12px;">
       <div class="panel-title" style="margin-bottom:0;">Seguimiento del día</div>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <span id="refresh-badge" style="font-size:11px;color:var(--gray-text);"></span>
-        <button class="btn-secondary" onclick="loadSeguimiento()" style="font-size:12px;padding:6px 12px;">Actualizar</button>
-      </div>
+      <span id="refresh-badge" style="font-size:11px;color:var(--gray-text);"></span>
     </div>
     <div style="background:var(--cyan-light);border:1px solid var(--cyan);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--teal);">
       <b>Para marcar una operación como realizada:</b> haz clic en el botón de estado (columna "Estado") — alterna entre
@@ -326,7 +323,7 @@ tr:last-child td{border-bottom:none;}
         <div class="panel-title" style="margin-bottom:4px;">Mis operaciones del día</div>
         <div id="miturno-subtitle" style="font-size:13px;color:var(--gray-text);"></div>
       </div>
-      <button class="btn-secondary" onclick="loadMiTurno()" style="font-size:12px;padding:6px 12px;">Actualizar</button>
+
     </div>
     <div class="stats-row" id="miturno-stats"></div>
     <div id="miturno-empty"></div>
@@ -714,12 +711,8 @@ async function testSpConnection(){
 // ─── GOOGLE SHEETS REST API ─────────────────────────────────────────────────
 async function gsCall(action, params){
   const payload = JSON.stringify({action, ...params});
-  const r = await fetch(GS_CONFIG.scriptUrl, {
-    method:'POST',
-    body:payload,
-    credentials:'include' // incluye cookies de sesión Google Workspace (creditu.com)
-  });
-  if(!r.ok) throw new Error('Error HTTP '+r.status+'. Verifica que el script esté publicado y que estés logueado con tu cuenta @creditu.com.');
+  const r = await fetch(GS_CONFIG.scriptUrl, {method:'POST', body:payload});
+  if(!r.ok) throw new Error('Error HTTP '+r.status+'. Verifica que el script esté publicado.');
   return r.json();
 }
 
@@ -1623,7 +1616,7 @@ function renderSeguimiento(){
 
 async function toggleEstado(uid){
   const op=seguimientoOps.find(o=>o.uid===uid);
-  if(!op){ alert('Operación no encontrada. Haz clic en "Actualizar" e intenta de nuevo.'); return; }
+  if(!op){ alert('Operación no encontrada. Recarga la página e intenta de nuevo.'); return; }
   const u = (currentUser||'').trim().toLowerCase();
   const canEdit = !currentUser || u===JEFE.toLowerCase() || u==='jefe' || u==='jefe de riesgo' || op.analista===currentUser;
   if(!canEdit){
