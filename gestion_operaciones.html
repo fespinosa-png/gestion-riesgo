@@ -260,7 +260,9 @@ tr:last-child td{border-bottom:none;}
       <div class="panel-title" style="margin-bottom:0;">Cargar operaciones del día</div>
       <span class="hint" style="margin:0;">Ingresa RUT, ID o CPF de cada operación. El sistema asigna automáticamente; puedes cambiar la asignación.</span>
     </div>
-    <div id="draft-badge" style="display:none;background:var(--amber-light);color:var(--amber);border:1px solid var(--amber);border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;margin-bottom:14px;align-items:center;gap:8px;">
+    <div id="draft-badge" style="display:none;background:var(--amber-light);color:var(--amber);border:1px solid var(--amber);border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;margin-bottom:14px;align-items:center;gap:8px;justify-content:space-between;">
+      <span id="draft-badge-text"></span>
+      <button onclick="limpiarDia()" style="padding:4px 12px;border-radius:6px;border:1px solid var(--amber);background:var(--white);color:var(--amber);font-size:11px;font-weight:700;cursor:pointer;">✕ Limpiar día</button>
     </div>
     <div id="ops-entry-panels"></div>
     <div id="dup-status" style="margin-bottom:8px;"></div>
@@ -952,6 +954,15 @@ function buildAbsenceDetail(analysts, absentList){
 
 
 function goTo(tab){
+  // Planificación y Operaciones solo para Jefe de Riesgo
+  const jefeOnly = ['plan','ops'];
+  if(jefeOnly.includes(tab) && currentUser && currentUser !== JEFE){
+    const u = currentUser.trim().toLowerCase();
+    if(u !== JEFE.toLowerCase() && u !== 'jefe' && u !== 'jefe de riesgo'){
+      alert('Solo el Jefe de Riesgo puede acceder a este módulo.');
+      return;
+    }
+  }
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('page-'+tab).classList.add('active');
@@ -959,7 +970,7 @@ function goTo(tab){
   document.querySelectorAll('.nav-tab')[tabs[tab]].classList.add('active');
   if(tab==='seguimiento') loadSeguimiento();
   if(tab==='historial') loadHistorial();
-  if(tab==='ops'){ buildOpsEntry(); updateConfirmDateLabel(); updateDraftBadge(); }
+  if(tab==='ops'){ loadOpsForToday().then(()=>{ buildOpsEntry(); updateConfirmDateLabel(); updateDraftBadge(); }); }
   if(tab==='miturno') loadMiTurno();
 }
 
@@ -979,18 +990,35 @@ function initUserSelect(){
   });
   const saved = localStorage.getItem('gestion_user');
   if(saved){ sel.value = saved; currentUser = saved; }
-  // Show/hide Mi turno tab based on user
-  const tab = document.getElementById('mi-turno-tab');
-  if(tab) tab.style.display = (currentUser && currentUser!==JEFE) ? 'flex' : 'none';
+  updateNavForUser(currentUser);
 }
 
 function setCurrentUser(v){
   currentUser = v;
   localStorage.setItem('gestion_user', v);
-  // Update Mi turno tab visibility (hide from Jefe, show to analysts)
-  const tab = document.getElementById('mi-turno-tab');
-  if(tab) tab.style.display = (v && v!==JEFE) ? 'flex' : 'none';
+  updateNavForUser(v);
   if(document.getElementById('page-miturno').classList.contains('active')) loadMiTurno();
+}
+
+function updateNavForUser(v){
+  const isJefe = !v || v===JEFE || v.trim().toLowerCase()==='jefe de riesgo' || v.trim().toLowerCase()==='jefe';
+  // Mi turno: solo para analistas
+  const miTurnoTab = document.getElementById('mi-turno-tab');
+  if(miTurnoTab) miTurnoTab.style.display = (v && !isJefe) ? 'flex' : 'none';
+  // Planificación y Operaciones: opacos y con tooltip para no-Jefe
+  document.querySelectorAll('.nav-tab').forEach((tab, idx) => {
+    if(idx === 0 || idx === 1){ // Planificación y Operaciones
+      tab.style.opacity = isJefe ? '1' : '0.4';
+      tab.title = isJefe ? '' : 'Solo disponible para el Jefe de Riesgo';
+      tab.style.cursor = isJefe ? 'pointer' : 'not-allowed';
+    }
+  });
+  // Si no es Jefe y está en Planificación u Operaciones → redirigir a Seguimiento
+  if(!isJefe && v){
+    const planActive = document.getElementById('page-plan').classList.contains('active');
+    const opsActive = document.getElementById('page-ops').classList.contains('active');
+    if(planActive || opsActive) goTo('seguimiento');
+  }
 }
 
 // ─── DATE ───────────────────────────────────────────────────────────────────
@@ -1333,8 +1361,17 @@ function updateDraftBadge(){
   const badge = document.getElementById('draft-badge');
   if(!badge) return;
   const hasDraft = dayOps.length > 0;
-  badge.style.display = hasDraft ? 'inline-flex' : 'none';
-  badge.textContent = '● Borrador: '+dayOps.length+' op'+(dayOps.length!==1?'s':'')+' sin confirmar';
+  badge.style.display = hasDraft ? 'flex' : 'none';
+  const txt = document.getElementById('draft-badge-text');
+  if(txt) txt.textContent = '● '+dayOps.length+' op'+(dayOps.length!==1?'s':'')+' cargadas'+( dayOps.some(o=>o.estado==='HECHO') ? '' : ' — sin confirmar aún');
+}
+
+function limpiarDia(){
+  if(!confirm('¿Limpiar todas las operaciones del día? Esto no afecta lo que ya está guardado en Google Sheets.')) return;
+  dayOps = [];
+  clearDraft();
+  buildOpsEntry();
+  updateDraftBadge();
 }
 
 function addOp(productKey){
@@ -1454,9 +1491,33 @@ function removeOp(uid){
   saveDraft();
 }
 
+async function loadOpsForToday(){
+  // Si ya hay operaciones cargadas, no hacer nada
+  if(dayOps.length > 0) return;
+  // Intentar cargar desde borrador local primero
+  if(loadDraft()) return;
+  // Si no hay borrador, cargar desde GS (ej. abrió desde otro computador)
+  try{
+    const r = await store.get('ops:'+currentDate);
+    if(r && r.value){
+      const gsOps = JSON.parse(r.value);
+      if(gsOps && gsOps.length){
+        dayOps = gsOps;
+        saveDraft(); // guardar como borrador local para próximas visitas
+      }
+    }
+  } catch(e){ console.log('No se pudo cargar desde GS:', e); }
+}
+
 async function confirmDay(){
   const statusEl=document.getElementById('confirm-status');
-
+  // Solo el Jefe puede confirmar
+  const u = (currentUser||'').trim().toLowerCase();
+  if(currentUser && u !== JEFE.toLowerCase() && u !== 'jefe' && u !== 'jefe de riesgo'){
+    statusEl.textContent = 'Solo el Jefe de Riesgo puede confirmar el reparto.';
+    statusEl.style.color = 'var(--red)';
+    return;
+  }
   // Check for duplicate identifiers before saving
   const dupCount = checkDuplicates();
   if(dupCount > 0){
@@ -1481,7 +1542,7 @@ async function confirmDay(){
     }));
     statusEl.textContent='✓ Reparto guardado el '+new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'})+'. Accesible para todo el equipo.';
     statusEl.style.color='var(--teal)';
-    clearDraft(); // borrador ya no necesario
+    // No limpiar borrador — las ops siguen visibles en Operaciones hasta nueva fecha o limpieza manual
     gsLogRows(dayOps, currentUser, currentDate);
   } catch(e){
     statusEl.textContent='Error al guardar: '+e.message;
@@ -1503,19 +1564,23 @@ function loadLocalBackup(){
 
 // Merge: ante un conflicto entre GS y local, gana el que tiene HECHO más reciente
 function mergeOps(gsOps, localOps){
-  // Si GS devuelve vacío pero hay backup local → mantener backup (GS puede estar lento)
-  if(!gsOps || !gsOps.length) return localOps || [];
-  // Si no hay backup local → usar GS tal cual
+  // GS es siempre la fuente de verdad para el listado de operaciones
+  // El backup local solo aporta estados HECHO que aún no llegaron a GS
+  // NUNCA reducir el número de operaciones que vienen de GS
+  if(!gsOps || !gsOps.length){
+    // GS vacío: puede ser demora de red, mantener lo que ya hay en memoria
+    return seguimientoOps && seguimientoOps.length ? seguimientoOps : (localOps || []);
+  }
   if(!localOps || !localOps.length) return gsOps;
-  // Ambos tienen datos → fusionar favoreciendo HECHO local sobre PENDIENTE en GS
   const localMap = {};
   localOps.forEach(o=>{ localMap[o.uid]=o; });
   return gsOps.map(op=>{
     const local = localMap[op.uid];
     if(!local) return op;
-    // Si local tiene HECHO y GS tiene PENDIENTE → local gana (GS aún no sincronizó)
-    if(local.estado==='HECHO' && op.estado==='PENDIENTE') return {...op, estado:'HECHO', completado_en:local.completado_en, obs_seguimiento:local.obs_seguimiento||op.obs_seguimiento};
-    // Si local tiene obs y GS no → usar obs local
+    // Solo tomar HECHO del local si GS tiene PENDIENTE (aún no sincronizó)
+    if(local.estado==='HECHO' && op.estado==='PENDIENTE'){
+      return {...op, estado:'HECHO', completado_en:local.completado_en, obs_seguimiento:local.obs_seguimiento||op.obs_seguimiento};
+    }
     if(local.obs_seguimiento && !op.obs_seguimiento) return {...op, obs_seguimiento:local.obs_seguimiento};
     return op;
   });
@@ -1843,6 +1908,18 @@ recalcPlan();
 showStorageBanner();
 updateConfirmDateLabel();
 updateConfirmDateLabel();
+// Limpiar backups de días anteriores para no contaminar el día de hoy
+(function limpiarBackupAntiguo(){
+  try{
+    const keys = Object.keys(localStorage);
+    keys.forEach(k => {
+      if(k.startsWith('backup:ops:') && !k.endsWith(currentDate)){
+        localStorage.removeItem(k);
+      }
+    });
+  } catch(e){}
+})();
+
 // Cargar borrador del día si existe
 if(loadDraft()){
   console.log('Borrador cargado:', dayOps.length, 'operaciones');
@@ -1865,26 +1942,24 @@ setInterval(async function(){
 ['click','keydown'].forEach(ev => document.addEventListener(ev, ()=>{ _lastRefresh = Date.now(); }));
 
 async function silentRefreshSeguimiento(){
-  // Recarga desde GS sin mostrar "Cargando..." (no interrumpe la vista)
   const backup = loadLocalBackup();
   try{
     const r = await store.get('ops:'+currentDate);
     const gsOps = r&&r.value ? JSON.parse(r.value) : [];
-    // Si GS devuelve vacío, no borrar lo que ya tienen los analistas
-    if(!gsOps.length && seguimientoOps.length) return;
+    // NUNCA actualizar si GS devuelve menos operaciones que lo que ya hay en pantalla
+    // (protege contra pérdida de datos por demora de red o error)
+    if(gsOps.length < seguimientoOps.length) return;
     const merged = mergeOps(gsOps, backup || seguimientoOps);
-    // Solo actualizar si hay cambios reales (evita re-render innecesario)
     const changed = JSON.stringify(merged) !== JSON.stringify(seguimientoOps);
     if(changed){
       seguimientoOps = merged;
       saveLocalBackup(seguimientoOps);
       populateFilters();
       renderSeguimiento();
-      // Mostrar indicador sutil de actualización
       const badge = document.getElementById('refresh-badge');
       if(badge){ badge.textContent = 'Actualizado ' + new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'}); }
     }
-  } catch(e){ /* silencioso — no molestar al usuario si GS falla */ }
+  } catch(e){ /* silencioso */ }
 }
 </script>
 </body>
