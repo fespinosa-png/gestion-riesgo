@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Gestión de Operaciones — Riesgo Originación</title>
+<title>Gestión de Operaciones -- Riesgo Originación</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap');
 :root{
@@ -222,9 +222,10 @@ tr:last-child td{border-bottom:none;}
   <div class="panel">
     <div class="flex-between" style="margin-bottom:14px;">
       <div class="panel-title" style="margin-bottom:0;">Día de operación</div>
-      <div class="daytoggle" style="margin-bottom:0;max-width:360px;">
-        <button id="btn-lj" class="active" onclick="setDayType('LJ')">Lunes–Jueves · 21 ops</button>
+      <div class="daytoggle" style="margin-bottom:0;max-width:500px;">
+        <button id="btn-lj" class="active" onclick="setDayType('LJ')">Lunes-Jueves · 21 ops</button>
         <button id="btn-v" onclick="setDayType('V')">Viernes · 16 ops</button>
+        <button id="btn-fds" onclick="setDayType('FDS')">Fin de semana · 16 ops</button>
       </div>
     </div>
     <div class="panel-title" style="margin-bottom:8px;">Disponibilidad del equipo hoy</div>
@@ -234,7 +235,7 @@ tr:last-child td{border-bottom:none;}
   </div>
 
   <div class="panel">
-    <p class="hint">Ingresa el volumen total por producto. El campo rojo (opcional) es para operaciones que vencen su SLA hoy — se priorizan primero.</p>
+    <p class="hint">Ingresa el volumen total por producto. El campo rojo (opcional) es para operaciones que vencen su SLA hoy -- se priorizan primero.</p>
     <div class="prod-grid" id="prod-grid"></div>
   </div>
 
@@ -267,7 +268,7 @@ tr:last-child td{border-bottom:none;}
     <div id="ops-entry-panels"></div>
     <div id="dup-status" style="margin-bottom:8px;"></div>
     <div class="btn-row" id="confirm-btn-row">
-      <button class="btn-primary" onclick="confirmDay()">Confirmar y guardar reparto — <span id="confirm-date-label"></span></button>
+      <button class="btn-primary" onclick="confirmDay()">Confirmar y guardar reparto -- <span id="confirm-date-label"></span></button>
       <span id="confirm-status" style="font-size:12px;color:var(--gray-text);"></span>
     </div>
   </div>
@@ -281,7 +282,7 @@ tr:last-child td{border-bottom:none;}
       <span id="refresh-badge" style="font-size:11px;color:var(--gray-text);"></span>
     </div>
     <div style="background:var(--cyan-light);border:1px solid var(--cyan);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--teal);">
-      <b>Para marcar una operación como realizada:</b> haz clic en el botón de estado (columna "Estado") — alterna entre
+      <b>Para marcar una operación como realizada:</b> haz clic en el botón de estado (columna "Estado") -- alterna entre
       <span style="background:var(--magenta-light);color:var(--magenta);padding:2px 8px;border-radius:10px;font-weight:700;font-size:11px;">PENDIENTE</span> y
       <span style="background:var(--cyan-light);color:var(--teal);padding:2px 8px;border-radius:10px;font-weight:700;font-size:11px;border:1px solid var(--cyan);">HECHO</span>.
       Si el botón aparece atenuado (opaco), selecciona tu nombre en el menú arriba a la derecha para activar tu turno.
@@ -557,10 +558,11 @@ var TEAM = [
   {name:'Matías',    products:['subsidio','leasing'],        role:'Analista',       reserve:false},
   {name:'Valentina', products:['leasing','pv'],              role:'Analista',       reserve:false},
   {name:'Ivan',      products:['leasing','pie','pv','subsidio'], role:'Reserva',   reserve:true},
+  {name:'Camila',    products:['subsidio','pv'],              role:'Analista',   reserve:true},
   {name:'Andrea',    products:['brasil'],                    role:'Analista Brasil', reserve:false},
 ];
 var JEFE = 'Jefe de Riesgo';
-var CAPS = {LJ:21, V:16};
+var CAPS = {LJ:21, V:16, FDS:16};
 var BRASIL_ANALYSTS = ['Andrea'];
 var CHILE_ANALYSTS = TEAM.filter(t=>!t.products.includes('brasil')).map(t=>t.name);
 
@@ -736,7 +738,7 @@ async function gsLogRows(ops, confirmedBy, date){
     obs_seguimiento: op.obs_seguimiento||'',
     asignado_en: op.asignado_en||'',
     completado_en: op.completado_en||'',
-    confirmedBy: confirmedBy||currentUser||'—'
+    confirmedBy: confirmedBy||currentUser||'--'
   }));
   try{
     await gsCall('logRows',{rows});
@@ -867,11 +869,11 @@ function classifyTier(fechaStr, slaH){
 }
 
 function fmtTime(iso){
-  if(!iso) return '—';
+  if(!iso) return '--';
   return new Date(iso).toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});
 }
 
-function fmtDate(iso){ return iso || '—'; }
+function fmtDate(iso){ return iso || '--'; }
 
 function roleBadgeClass(name){
   const t = TEAM.find(x=>x.name===name);
@@ -940,7 +942,7 @@ function buildAbsenceDetail(analysts, absentList){
         .map(([n,a])=>`${n} (${a.detail[product.key]})`).join(', ');
       msg = `Líder de ${product.name}. El volumen (${totalForProduct} ops) se redistribuye entre: ${topCovers||'equipo disponible'}.`;
     } else {
-      msg = `Analista sin producto asignado en esta sesión — su capacidad (${CAPS[dayType]} ops) se redistribuye automáticamente entre el equipo presente.`;
+      msg = `Analista sin producto asignado en esta sesión -- su capacidad (${CAPS[dayType]} ops) se redistribuye automáticamente entre el equipo presente.`;
     }
     return `<div class="absence-row"><span class="arrow">→</span><div><b>${name}:</b> ${msg}</div></div>`;
   }).join('');
@@ -1032,6 +1034,7 @@ function setDayType(t){
   dayType = t;
   document.getElementById('btn-lj').classList.toggle('active', t==='LJ');
   document.getElementById('btn-v').classList.toggle('active', t==='V');
+  const fdsBtn=document.getElementById('btn-fds'); if(fdsBtn) fdsBtn.classList.toggle('active', t==='FDS');
   recalcPlan();
 }
 
@@ -1150,7 +1153,7 @@ function recalcPlan(){
   `;
 
   let alerts='';
-  if(Object.keys(riskU).length) alerts+=`<div class="alert red"><b>Crítico:</b> hay operaciones que vencen hoy sin cubrir — ${Object.entries(riskU).map(([k,n])=>PRODUCTS.find(p=>p.key===k)?.name+' ('+n+')').join(', ')}.</div>`;
+  if(Object.keys(riskU).length) alerts+=`<div class="alert red"><b>Crítico:</b> hay operaciones que vencen hoy sin cubrir -- ${Object.entries(riskU).map(([k,n])=>PRODUCTS.find(p=>p.key===k)?.name+' ('+n+')').join(', ')}.</div>`;
   if(Object.keys(riskN).length) alerts+=`<div class="alert amber"><b>Sin cubrir hoy:</b> ${Object.entries(riskN).map(([k,n])=>PRODUCTS.find(p=>p.key===k)?.name+' ('+n+')').join(', ')}.</div>`;
   document.getElementById('alert-wrap').innerHTML=alerts;
 
@@ -1169,7 +1172,7 @@ function recalcPlan(){
         : '';
     const prodAffinityStr = t.products.map(k=>PRODUCTS.find(p=>p.key===k)?.name||k).join(' · ');
     const detail=absent
-      ? '<i style="color:var(--red);">Ausente — sin operaciones asignadas</i>'
+      ? '<i style="color:var(--red);">Ausente -- sin operaciones asignadas</i>'
       : (Object.entries(a.detail).map(([k,n])=>PRODUCTS.find(p=>p.key===k)?.name+': '+n).join(' · ')||'Sin operaciones asignadas');
     return `<tr style="${absent?'opacity:.45;':''}">
       <td>
@@ -1181,7 +1184,7 @@ function recalcPlan(){
       <td class="breakdown">${detail}</td>
       <td>
         ${absent
-          ? '<div style="font-size:12px;color:var(--red);">—</div>'
+          ? '<div style="font-size:12px;color:var(--red);">--</div>'
           : `<div class="bar-track"><div class="bar-fill ${bc}" style="width:${pct}%"></div></div>
              <div style="font-size:11px;color:var(--gray-text);margin-top:3px;">${a.assigned}/${a.cap} ops (${pct}%)${over?' · sobre tope':''}</div>`
         }
@@ -1261,7 +1264,7 @@ function buildOpsEntry(){
                   });
                   const opts = sortedT.map(t=>{
                     const avail = availability[t.name];
-                    return `<option value="${t.name}" ${op.analista===t.name?'selected':''} ${!avail&&op.analista!==t.name?'disabled':''}>${t.name}${t.reserve?' (Reserva)':''}${!avail?' — ausente':''}</option>`;
+                    return `<option value="${t.name}" ${op.analista===t.name?'selected':''} ${!avail&&op.analista!==t.name?'disabled':''}>${t.name}${t.reserve?' (Reserva)':''}${!avail?' -- ausente':''}</option>`;
                   }).join('');
                   return `<tr style="border-bottom:1px solid var(--gray-line);">
                     <td style="padding:7px 8px;">${p.name} <span class="role-badge ${p.key==='brasil'?'brasil':''}">${p.idType}</span></td>
@@ -1313,7 +1316,7 @@ function opRowHTML(op, p){
   });
   const analystOpts = sorted.map(t=>{
     const avail = availability[t.name];
-    const label = t.name + (t.reserve?' (Reserva)':'') + (!avail?' — ausente':'');
+    const label = t.name + (t.reserve?' (Reserva)':'') + (!avail?' -- ausente':'');
     return `<option value="${t.name}" ${op.analista===t.name?'selected':''} ${!avail&&op.analista!==t.name?'disabled':''}>${label}</option>`;
   }).join('');
   const placeholder = p.idType==='CPF' ? 'CPF (se puede completar después)' :
@@ -1363,7 +1366,7 @@ function updateDraftBadge(){
   const hasDraft = dayOps.length > 0;
   badge.style.display = hasDraft ? 'flex' : 'none';
   const txt = document.getElementById('draft-badge-text');
-  if(txt) txt.textContent = '● '+dayOps.length+' op'+(dayOps.length!==1?'s':'')+' cargadas'+( dayOps.some(o=>o.estado==='HECHO') ? '' : ' — sin confirmar aún');
+  if(txt) txt.textContent = '● '+dayOps.length+' op'+(dayOps.length!==1?'s':'')+' cargadas'+( dayOps.some(o=>o.estado==='HECHO') ? '' : ' -- sin confirmar aún');
 }
 
 function limpiarDia(){
@@ -1461,7 +1464,7 @@ function checkDuplicates(){
         const others=map[val].filter(u=>u!==o.uid)
           .map(u=>{ const x=dayOps.find(d=>d.uid===u); return x?x.analista||'sin asignar':''; })
           .filter(Boolean).join(', ');
-        warn.textContent=' Identificador repetido'+( others ? ' — también en: '+others : '');
+        warn.textContent=' Identificador repetido'+( others ? ' -- también en: '+others : '');
       } else if(warn){
         warn.remove();
       }
@@ -1537,12 +1540,12 @@ async function confirmDay(){
     await store.set('ops:'+currentDate, JSON.stringify(dayOps));
     await store.set('meta:'+currentDate, JSON.stringify({
       date:currentDate, dayType, volumes:vols, distribution:planDistribution,
-      confirmedAt:new Date().toISOString(), confirmedBy:currentUser||'—',
+      confirmedAt:new Date().toISOString(), confirmedBy:currentUser||'--',
       totalOps:dayOps.length
     }));
     statusEl.textContent='✓ Reparto guardado el '+new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'})+'. Accesible para todo el equipo.';
     statusEl.style.color='var(--teal)';
-    // No limpiar borrador — las ops siguen visibles en Operaciones hasta nueva fecha o limpieza manual
+    // No limpiar borrador -- las ops siguen visibles en Operaciones hasta nueva fecha o limpieza manual
     gsLogRows(dayOps, currentUser, currentDate);
   } catch(e){
     statusEl.textContent='Error al guardar: '+e.message;
@@ -1659,13 +1662,13 @@ function renderSeguimiento(){
     return `<tr>
       <td class="breakdown">${op.productName}</td>
       <td class="breakdown">
-        ${op.identificador||'—'}
+        ${op.identificador||'--'}
         ${op._isDup?'<div class="dup-warning"> Repetido</div>':''}
       </td>
-      <td><div class="analyst-name" style="font-size:13px;">${op.analista||'—'}</div></td>
+      <td><div class="analyst-name" style="font-size:13px;">${op.analista||'--'}</div></td>
       <td><span class="tier-badge ${op.tier}">${op.tier}</span></td>
       <td>${estadoBtn}</td>
-      <td class="breakdown">${op.estado==='HECHO'?fmtTime(op.completado_en):'—'}</td>
+      <td class="breakdown">${op.estado==='HECHO'?fmtTime(op.completado_en):'--'}</td>
       <td style="min-width:160px;">
         <textarea class="obs-field" rows="1"
           placeholder="Agregar observación..."
@@ -1724,10 +1727,10 @@ async function loadHistorial(){
     try{ const r=await store.get('ops:'+meta.date); if(r&&r.value) ops=JSON.parse(r.value); }catch(e){}
     const hechos=ops.filter(o=>o.estado==='HECHO').length;
     const pct=ops.length>0?Math.round((hechos/ops.length)*100):0;
-    const dayLabel=meta.dayType==='LJ'?'Lun–Jue':'Viernes';
+    const dayLabel=meta.dayType==='LJ'?'Lun-Jue':'Viernes';
     return `<div class="hist-row">
       <div class="hist-date">${meta.date}</div>
-      <div class="hist-meta">${dayLabel} · ${meta.totalOps} ops · confirmado por ${meta.confirmedBy||'—'}</div>
+      <div class="hist-meta">${dayLabel} · ${meta.totalOps} ops · confirmado por ${meta.confirmedBy||'--'}</div>
       <div class="prog-bar">
         <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:var(--teal);"></div></div>
         <div style="font-size:11px;color:var(--gray-text);margin-top:3px;">${hechos}/${ops.length} hechos (${pct}%)</div>
@@ -1775,7 +1778,7 @@ async function loadMiTurno(){
   try{
     const r = await store.get('ops:'+currentDate);
     const gsOps = r&&r.value ? JSON.parse(r.value) : [];
-    // Merge con backup local — nunca pierde HECHO aunque GS tenga PENDIENTE
+    // Merge con backup local -- nunca pierde HECHO aunque GS tenga PENDIENTE
     seguimientoOps = mergeOps(gsOps, backup || seguimientoOps);
     saveLocalBackup(seguimientoOps);
   } catch(e){
@@ -1821,14 +1824,14 @@ async function loadMiTurno(){
         <div class="obs-wrap">
           <div class="obs-label">Observación</div>
           <textarea class="obs-field" rows="2"
-            placeholder="Opcional — escribe aquí cualquier nota sobre esta operación..."
+            placeholder="Opcional -- escribe aquí cualquier nota sobre esta operación..."
             onblur="saveObs('${op.uid}',this.value)"
             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();this.blur();}"
           >${op.obs_seguimiento||''}</textarea>
         </div>
       </div>
       <button class="estado-big ${op.estado}" onclick="toggleEstadoMiTurno('${op.uid}')">
-        ${op.estado==='PENDIENTE'?'Marcar como hecha':'✓ Realizada — deshacer'}
+        ${op.estado==='PENDIENTE'?'Marcar como hecha':'✓ Realizada -- deshacer'}
       </button>
     </div>`;
   }).join('');
@@ -1904,6 +1907,8 @@ initDate();
 initUserSelect();
 initAvailability();
 buildProdGrid();
+// Auto-detectar tipo de día
+dayType = autoDetectDayType();
 recalcPlan();
 showStorageBanner();
 updateConfirmDateLabel();
@@ -1927,7 +1932,25 @@ if(loadDraft()){
 
 // ─── AUTO-REFRESH CADA 2 MINUTOS ─────────────────────────────────────────────
 var _lastRefresh = Date.now();
+var _midnightWarningShown = false;
+
 setInterval(async function(){
+  // Detectar cambio de fecha (medianoche)
+  const realToday = todayISO();
+  if(realToday !== currentDate && !_midnightWarningShown){
+    _midnightWarningShown = true;
+    const continuar = window.confirm('Pasaron las 12:00 AM - nuevo dia: ' + realToday + '. Continuar con operaciones del dia anterior ' + currentDate + '?');
+    if(!continuar){
+      currentDate = realToday;
+      document.getElementById('date-badge').textContent = currentDate;
+      updateConfirmDateLabel();
+      _midnightWarningShown = false;
+      dayType = autoDetectDayType();
+      recalcPlan();
+    }
+    return;
+  }
+
   // Solo recarga si la página activa es Seguimiento o Mi turno
   const segActive = document.getElementById('page-seguimiento').classList.contains('active');
   const miTurnoActive = document.getElementById('page-miturno').classList.contains('active');
