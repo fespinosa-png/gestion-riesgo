@@ -265,6 +265,14 @@ tr:last-child td{border-bottom:none;}
       <span id="draft-badge-text"></span>
       <button onclick="limpiarDia()" style="padding:4px 12px;border-radius:6px;border:1px solid var(--amber);background:var(--white);color:var(--amber);font-size:11px;font-weight:700;cursor:pointer;">✕ Limpiar día</button>
     </div>
+    <div style="background:var(--cyan-light);border:1px solid var(--cyan);border-radius:8px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+      <div>
+        <div style="font-size:13px;font-weight:600;color:var(--teal);">Cargar MHE desde Sheet maestro</div>
+        <div style="font-size:11px;color:var(--gray-text);margin-top:2px;">Lee automáticamente las operaciones Pendientes de Primera Vivienda y Subsidio, ordenadas por urgencia real (Horas Hábiles).</div>
+      </div>
+      <button class="btn-teal" onclick="cargarDesdeMaestro()" id="btn-cargar-maestro" style="white-space:nowrap;">↓ Cargar desde Sheet maestro</button>
+    </div>
+    <div id="maestro-status" style="font-size:12px;margin-bottom:10px;"></div>
     <div id="ops-entry-panels"></div>
     <div id="dup-status" style="margin-bottom:8px;"></div>
     <div class="btn-row" id="confirm-btn-row">
@@ -436,6 +444,51 @@ function handleRequest(params) {
   }
   if (action === 'ping') return {ok:true};
 
+  // ── Leer operaciones pendientes MHE desde SABANA_MAESTRA ──────────────────
+  if (action === 'getMHEPendientes') {
+    try {
+      var masterSS = SpreadsheetApp.openById('10GQdpwjUMCQqEGGDCalWJV5FAupzJSyW8dULY9JDWbc');
+      var masterSheet = masterSS.getSheetByName('SABANA_MAESTRA');
+      if (!masterSheet) masterSheet = masterSS.getSheetByName('S\u00c1BANA_MAESTRA');
+      if (!masterSheet) return {error: 'No se encontro la pestana SABANA_MAESTRA'};
+      var data = masterSheet.getDataRange().getValues();
+      var headers = data[0];
+      // Mapear columnas
+      var colIdx = {};
+      headers.forEach(function(h, i){ colIdx[h] = i; });
+      var required = ['ID_Operacion','RUT_Titular','Segmento_SLA','Resolucion_Riesgo','Horas_Habiles','Fecha_Envio','Analista_Riesgo'];
+      for (var r = 0; r < required.length; r++) {
+        if (colIdx[required[r]] === undefined) return {error: 'Columna no encontrada: ' + required[r]};
+      }
+      var productos = ['Primera Vivienda', 'Subsidio'];
+      var ops = [];
+      for (var i = 1; i < data.length; i++) {
+        var row = data[i];
+        var resolucion = (row[colIdx['Resolucion_Riesgo']] || '').toString().trim();
+        var segmento = (row[colIdx['Segmento_SLA']] || '').toString().trim();
+        if (resolucion !== 'Pendiente') continue;
+        if (productos.indexOf(segmento) === -1) continue;
+        var horasHabiles = parseFloat(row[colIdx['Horas_Habiles']]) || 0;
+        var tier = horasHabiles >= 48 ? 'vencido' : (horasHabiles >= 36 ? 'urgente' : 'normal');
+        ops.push({
+          id_operacion: (row[colIdx['ID_Operacion']] || '').toString(),
+          rut: (row[colIdx['RUT_Titular']] || '').toString(),
+          segmento: segmento,
+          horas_habiles: horasHabiles,
+          tier: tier,
+          fecha_envio: (row[colIdx['Fecha_Envio']] || '').toString(),
+          analista_actual: (row[colIdx['Analista_Riesgo']] || '').toString()
+        });
+      }
+      // Ordenar: vencidos primero, luego urgentes, luego normales
+      var tierOrder = {vencido:0, urgente:1, normal:2};
+      ops.sort(function(a,b){ return tierOrder[a.tier] - tierOrder[b.tier]; });
+      return {ops: ops, total: ops.length};
+    } catch(err) {
+      return {error: err.toString()};
+    }
+  }
+
   // ── Hoja de registro histórico (legible, por fila) ─────────────────────────
   if (action === 'logRows') {
     var COLS = ['Fecha','Analista','Producto','Tipo ID','Identificador',
@@ -451,25 +504,29 @@ function handleRequest(params) {
       hdr.setFontColor('#FFFFFF');
       hdr.setFontWeight('bold');
     }
-    var logData = log.getDataRange().getValues();
-    var uidCol = 11; // columna L (índice 0 = col A)
-    var rows = params.rows;
-    for (var r = 0; r &lt; rows.length; r++) {
-      var op = rows[r];
-      var rowArr = [
-        op.date        || '',
-        op.analista    || '',
-        op.productName || '',
-        op.idType      || '',
-        op.identificador || '(pendiente)',
-        op.estado      || 'PENDIENTE',
-        op.tier        || 'normal',
-        op.obs_seguimiento || '',
-        op.asignado_en  ? new Date(op.asignado_en).toLocaleString('es-CL')  : '',
-        op.completado_en? new Date(op.completado_en).toLocaleString('es-CL'): '',
-        op.confirmedBy || '',
-        op.uid         || ''
-      ];
+      var logData = log.getDataRange().getValues();
+      var uidCol = 11; // columna L (índice 0 = col A)
+      var rows = params.rows;
+      for (var r = 0; r < rows.length; r++) {
+        var op = rows[r];
+        // Usar objetos Date reales para que Sheets permita filtrar por fecha
+        var fechaAsignado = op.asignado_en ? new Date(op.asignado_en) : '';
+        var fechaCompletado = op.completado_en ? new Date(op.completado_en) : '';
+        var fechaDia = op.date ? new Date(op.date) : '';
+        var rowArr = [
+          fechaDia,
+          op.analista    || '',
+          op.productName || '',
+          op.idType      || '',
+          op.identificador || '(pendiente)',
+          op.estado      || 'PENDIENTE',
+          op.tier        || 'normal',
+          op.obs_seguimiento || '',
+          fechaAsignado,
+          fechaCompletado,
+          op.confirmedBy || '',
+          op.uid         || ''
+        ];
       var found = false;
       for (var m = 1; m &lt; logData.length; m++) {
         if (logData[m][uidCol] === op.uid) {
@@ -1494,6 +1551,83 @@ function removeOp(uid){
   saveDraft();
 }
 
+// ─── CARGAR DESDE SHEET MAESTRO (MHE) ────────────────────────────────────────
+async function cargarDesdeMaestro(){
+  const btn = document.getElementById('btn-cargar-maestro');
+  const statusEl = document.getElementById('maestro-status');
+  btn.disabled = true;
+  btn.textContent = 'Cargando...';
+  statusEl.textContent = '';
+  statusEl.style.color = 'var(--gray-text)';
+
+  try{
+    const result = await gsCall('getMHEPendientes', {});
+    if(result.error){
+      statusEl.textContent = '✗ Error: ' + result.error;
+      statusEl.style.color = 'var(--red)';
+      btn.disabled = false; btn.textContent = '↓ Cargar desde Sheet maestro';
+      return;
+    }
+
+    const ops = result.ops || [];
+    if(!ops.length){
+      statusEl.textContent = 'No hay operaciones MHE pendientes en el Sheet maestro.';
+      statusEl.style.color = 'var(--gray-text)';
+      btn.disabled = false; btn.textContent = '↓ Cargar desde Sheet maestro';
+      return;
+    }
+
+    // Mapear a objetos dayOps — evitar duplicados por ID_Operacion
+    const existingIds = new Set(dayOps.map(o=>o.identificador));
+    let nuevas = 0;
+
+    ops.forEach(op=>{
+      const idKey = op.id_operacion + '|' + op.rut;
+      if(existingIds.has(op.id_operacion) || existingIds.has(op.rut)) return; // ya existe
+
+      const productKey = op.segmento === 'Primera Vivienda' ? 'pv' : 'subsidio';
+      const p = PRODUCTS.find(x=>x.key===productKey);
+      const newOp = {
+        uid: uid(),
+        productKey,
+        productName: p ? p.name : op.segmento,
+        identificador: op.rut,         // RUT como identificador principal
+        analista: autoAssign(productKey),
+        estado: 'PENDIENTE',
+        tier: op.tier,
+        fecha_riesgo: op.fecha_envio ? op.fecha_envio.slice(0,10) : '',
+        obs: 'ID Op: ' + op.id_operacion + ' | Horas háb: ' + op.horas_habiles.toFixed(1),
+        obs_seguimiento: '',
+        asignado_en: new Date().toISOString(),
+        completado_en: null,
+        _id_operacion: op.id_operacion,  // referencia interna al maestro
+        _horas_habiles: op.horas_habiles
+      };
+      dayOps.push(newOp);
+      existingIds.add(op.rut);
+      nuevas++;
+    });
+
+    saveDraft();
+    buildOpsEntry();
+    updateDraftBadge();
+
+    const vencidas = ops.filter(o=>o.tier==='vencido').length;
+    const urgentes = ops.filter(o=>o.tier==='urgente').length;
+    statusEl.innerHTML =
+      '<span style="color:var(--teal);font-weight:600;">✓ ' + nuevas + ' operaciones MHE cargadas</span>' +
+      (vencidas ? ' · <span style="color:var(--red);font-weight:600;">' + vencidas + ' vencidas</span>' : '') +
+      (urgentes ? ' · <span style="color:var(--amber);font-weight:600;">' + urgentes + ' urgentes</span>' : '') +
+      '. Revisa la asignación y confirma.';
+
+  } catch(e){
+    statusEl.textContent = '✗ Error al conectar con el Sheet maestro: ' + e.message;
+    statusEl.style.color = 'var(--red)';
+  }
+  btn.disabled = false;
+  btn.textContent = '↓ Cargar desde Sheet maestro';
+}
+
 async function loadOpsForToday(){
   // Si ya hay operaciones cargadas, no hacer nada
   if(dayOps.length > 0) return;
@@ -1537,6 +1671,19 @@ async function confirmDay(){
   statusEl.textContent='Guardando...';
   try{
     const vols=getVolumes();
+    // Preservar estados HECHO/observaciones del equipo antes de guardar
+    // (evita borrar avance cuando el Jefe reconfirma para actualizar un RUT o ajuste)
+    if(seguimientoOps && seguimientoOps.length){
+      const segMap = {};
+      seguimientoOps.forEach(o=>{ segMap[o.uid]=o; });
+      dayOps.forEach(op=>{
+        const seg = segMap[op.uid];
+        if(seg){
+          if(seg.estado==='HECHO'){ op.estado='HECHO'; op.completado_en=seg.completado_en; }
+          if(seg.obs_seguimiento) op.obs_seguimiento=seg.obs_seguimiento;
+        }
+      });
+    }
     await store.set('ops:'+currentDate, JSON.stringify(dayOps));
     await store.set('meta:'+currentDate, JSON.stringify({
       date:currentDate, dayType, volumes:vols, distribution:planDistribution,
