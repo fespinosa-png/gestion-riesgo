@@ -189,6 +189,8 @@ tr:last-child td{border-bottom:none;}
   .obs-field::placeholder{color:var(--gray-line);}
   .obs-wrap{margin-top:5px;}
   .obs-label{font-size:10px;color:var(--gray-text);font-weight:600;margin-bottom:2px;text-transform:uppercase;letter-spacing:.04em;}
+  .needs-review{border-left:3px solid var(--magenta) !important;background:var(--magenta-light) !important;}
+  .needs-review::before{content:"⚠ Revisar asignación · ";color:var(--magenta);font-size:10px;font-weight:700;}
   .dup-warning{
     font-size:11px;color:var(--red);font-weight:600;margin-top:3px;
     display:flex;align-items:center;gap:4px;
@@ -287,7 +289,10 @@ tr:last-child td{border-bottom:none;}
   <div class="panel">
     <div class="flex-between" style="margin-bottom:12px;">
       <div class="panel-title" style="margin-bottom:0;">Seguimiento del día</div>
-      <span id="refresh-badge" style="font-size:11px;color:var(--gray-text);"></span>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span id="refresh-badge" style="font-size:11px;color:var(--gray-text);"></span>
+        <button class="btn-secondary" onclick="generarResumenCierre()" style="font-size:12px;padding:6px 12px;">📊 Resumen del día</button>
+      </div>
     </div>
     <div style="background:var(--cyan-light);border:1px solid var(--cyan);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--teal);">
       <b>Para marcar una operación como realizada:</b> haz clic en el botón de estado (columna "Estado") -- alterna entre
@@ -309,7 +314,7 @@ tr:last-child td{border-bottom:none;}
     <table>
       <thead>
         <tr>
-          <th>Producto</th><th>Identificador</th><th>Analista</th><th>Urgencia</th><th>Estado</th><th>Completado</th><th>Observación</th>
+          <th>Producto</th><th>Identificador</th><th>Analista</th><th>Urgencia</th><th>SLA</th><th>Estado</th><th>Completado</th><th>Observación</th>
         </tr>
       </thead>
       <tbody id="seg-body"></tbody>
@@ -930,6 +935,27 @@ function fmtTime(iso){
   return new Date(iso).toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});
 }
 
+function calcSLACell(op){
+  const SLA_HRS = PRODUCTS.find(p=>p.key===op.productKey)?.slaH || 48;
+  let horasTranscurridas = null;
+  if(op._horas_habiles !== undefined && op.fecha_riesgo){
+    const loadedAt = op.asignado_en ? new Date(op.asignado_en) : new Date();
+    const horasAdicionales = (Date.now() - loadedAt.getTime()) / 3600000 * 0.7;
+    horasTranscurridas = (op._horas_habiles||0) + horasAdicionales;
+  } else if(op.fecha_riesgo){
+    horasTranscurridas = (Date.now() - new Date(op.fecha_riesgo)) / 3600000 * 0.7;
+  }
+  if(horasTranscurridas===null) return '<td class="breakdown" style="color:var(--gray-text);">--</td>';
+  const restantes = SLA_HRS - horasTranscurridas;
+  const pct = Math.min(100, Math.round((horasTranscurridas/SLA_HRS)*100));
+  let color, label;
+  if(restantes<=0){ color='var(--red)'; label='Vencida '+Math.abs(Math.round(restantes))+'h'; }
+  else if(restantes<=12){ color='var(--magenta)'; label=Math.round(restantes)+'h restantes'; }
+  else if(restantes<=24){ color='var(--amber)'; label=Math.round(restantes)+'h restantes'; }
+  else { color='var(--teal)'; label=Math.round(restantes)+'h restantes'; }
+  return '<td style="min-width:110px;"><div style="font-size:11px;font-weight:700;color:'+color+';">'+label+'</div><div style="height:4px;background:var(--gray-line);border-radius:4px;margin-top:3px;"><div style="height:100%;width:'+pct+'%;background:'+color+';border-radius:4px;"></div></div></td>';
+}
+
 function fmtDate(iso){ return iso || '--'; }
 
 function roleBadgeClass(name){
@@ -1379,7 +1405,7 @@ function opRowHTML(op, p){
   const placeholder = p.idType==='CPF' ? 'CPF (se puede completar después)' :
                       p.idType==='ID'  ? 'ID (opcional, puede llegar después)' :
                                           'RUT (opcional, puede llegar después)';
-  return `<div class="op-row" id="oprow-${op.uid}">
+  return `<div class="op-row${op._needs_review?' needs-review':''}" id="oprow-${op.uid}">
     <input type="text" value="${op.identificador}" placeholder="${placeholder}" oninput="updateOp('${op.uid}','identificador',this.value)" style="max-width:180px;">
     <select onchange="updateOp('${op.uid}','analista',this.value)">
       <option value="">Sin asignar</option>${analystOpts}
@@ -1577,34 +1603,95 @@ async function cargarDesdeMaestro(){
       return;
     }
 
-    // Mapear a objetos dayOps — evitar duplicados por ID_Operacion
+    // Mapear a objetos dayOps — detectar duplicados y preguntar
     const existingIds = new Set(dayOps.map(o=>o.identificador));
-    let nuevas = 0;
+    const existingIdOps = new Set(dayOps.map(o=>o._id_operacion).filter(Boolean));
 
+    // Detectar duplicados antes de cargar — por RUT o por ID_Operacion
+    const duplicados = ops.filter(op=>{
+      const rutNorm = op.rut.replace(/[\.\-\s]/g,'').toLowerCase();
+      const rutExists = [...existingIds].some(id=>(id||'').replace(/[\.\-\s]/g,'').toLowerCase()===rutNorm);
+      return rutExists || existingIdOps.has(op.id_operacion);
+    });
+
+    if(duplicados.length > 0){
+      const lista = duplicados.slice(0,8).map(o=>{
+        const existing = dayOps.find(d=>
+          (d.identificador||'').replace(/[\.\-\s]/g,'').toLowerCase() === op.rut.replace(/[\.\-\s]/g,'').toLowerCase() ||
+          d._id_operacion === o.id_operacion
+        );
+        return '• RUT '+o.rut+' ('+o.segmento+')' + (existing ? ' → ya asignada a '+( existing.analista||'Sin asignar') : '');
+      }).join('|');
+      const mas = duplicados.length > 8 ? '\n... y '+(duplicados.length-8)+' más.' : '';
+      const continuar = window.confirm(
+        'Se detectaron '+duplicados.length+' operaciones que ya estan cargadas hoy:\n\n'+lista+mas+
+        '\n\nAceptar = cargar solo las operaciones nuevas (omitir duplicados)\nCancelar = no cargar nada'
+      );
+      if(!continuar){ btn.disabled=false; btn.textContent='↓ Cargar desde Sheet maestro'; return; }
+    }
+
+    let nuevas = 0;
     ops.forEach(op=>{
-      const idKey = op.id_operacion + '|' + op.rut;
-      if(existingIds.has(op.id_operacion) || existingIds.has(op.rut)) return; // ya existe
+      const rutNorm = op.rut.replace(/[\.\-\s]/g,'').toLowerCase();
+      const rutExists = [...existingIds].some(id=>(id||'').replace(/[\.\-\s]/g,'').toLowerCase()===rutNorm);
+      if(rutExists || existingIdOps.has(op.id_operacion)) return;
 
       const productKey = op.segmento === 'Primera Vivienda' ? 'pv' : 'subsidio';
       const p = PRODUCTS.find(x=>x.key===productKey);
+      // Mapeo de nombres completos del maestro a nombres cortos del equipo
+      // Mapeo completo: usuarios del maestro → nombres cortos del equipo
+      // Si no está en el mapa o es genérico → auto-asignar
+      const NOMBRE_MAP = {
+        // Nombres completos
+        'argelis mena':'Argelis',
+        'iliana coelho salas':'Iliana',
+        'yusbreili gil':'Yusbreili',
+        // Usuarios del sistema (login)
+        'jguerrero':'Josmar',
+        'vquintero':'Valentina',
+        'mcisterna':'Matías',
+        'aperdigon':'Andrea',
+        'cbarrera':'Camila',
+        // Nombres directos
+        'josmar':'Josmar',
+        'iliana':'Iliana',
+        'yusbreili':'Yusbreili',
+        'argelis':'Argelis',
+        'matias':'Matías',
+        'matías':'Matías',
+        'valentina':'Valentina',
+        'ivan':'Ivan',
+        'camila':'Camila',
+        'andrea':'Andrea'
+        // producdigitalriesgo, primera iteración, primera iteracion
+        // → NO están en el mapa → auto-asignan por algoritmo
+      };
+      const analista_maestro = (op.analista_actual||'').trim().toLowerCase();
+      const analistaResuelto = NOMBRE_MAP[analista_maestro] || null;
+      // Usar analista del maestro si es del equipo, sino auto-asignar
+      const analistaFinal = analistaResuelto || autoAssign(productKey);
+      const genericos = ['producdigitalriesgo','primera iteracion','primera iteración',''];
+      const needsReview = !analistaResuelto && genericos.includes(analista_maestro);
       const newOp = {
         uid: uid(),
         productKey,
         productName: p ? p.name : op.segmento,
-        identificador: op.rut,         // RUT como identificador principal
-        analista: autoAssign(productKey),
+        identificador: op.rut,
+        analista: analistaFinal,
         estado: 'PENDIENTE',
         tier: op.tier,
         fecha_riesgo: op.fecha_envio ? op.fecha_envio.slice(0,10) : '',
-        obs: 'ID Op: ' + op.id_operacion + ' | Horas háb: ' + op.horas_habiles.toFixed(1),
+        obs: 'ID Op: ' + op.id_operacion + ' | Horas hab: ' + op.horas_habiles.toFixed(1),
         obs_seguimiento: '',
         asignado_en: new Date().toISOString(),
         completado_en: null,
-        _id_operacion: op.id_operacion,  // referencia interna al maestro
-        _horas_habiles: op.horas_habiles
+        _id_operacion: op.id_operacion,
+        _horas_habiles: op.horas_habiles,
+        _needs_review: needsReview  // requiere revisión manual de asignación
       };
       dayOps.push(newOp);
       existingIds.add(op.rut);
+      existingIdOps.add(op.id_operacion);
       nuevas++;
     });
 
@@ -1655,6 +1742,14 @@ async function confirmDay(){
     statusEl.style.color = 'var(--red)';
     return;
   }
+  // Verificar operaciones sin identificador
+  const sinId = dayOps.filter(o=>!(o.identificador||'').trim());
+  if(sinId.length > 0){
+    const sinIdNombres = sinId.slice(0,5).map(o=>o.productName+' ('+( o.analista||'Sin asignar')+')').join(', ');
+    const ok = window.confirm('Hay '+sinId.length+' operacion(es) sin RUT/ID: '+sinIdNombres+'. Aceptar = confirmar igual. Cancelar = volver a completarlos.');
+    if(!ok) return;
+  }
+
   // Check for duplicate identifiers before saving
   const dupCount = checkDuplicates();
   if(dupCount > 0){
@@ -1806,14 +1901,16 @@ function renderSeguimiento(){
   document.getElementById('seg-body').innerHTML=ops.map(op=>{
     const editable=canEdit(op);
     const estadoBtn=`<button class="estado-btn ${op.estado}" onclick="toggleEstado('${op.uid}')" title="Haz clic para cambiar el estado">${op.estado}</button>`;
-    return `<tr>
+    return `<tr${op._needs_review?' style="border-left:3px solid var(--magenta);"':''}>
       <td class="breakdown">${op.productName}</td>
       <td class="breakdown">
         ${op.identificador||'--'}
         ${op._isDup?'<div class="dup-warning"> Repetido</div>':''}
+        ${op._needs_review?'<div style="font-size:10px;color:var(--magenta);font-weight:700;">⚠ Revisar asignacion</div>':''}
       </td>
       <td><div class="analyst-name" style="font-size:13px;">${op.analista||'--'}</div></td>
       <td><span class="tier-badge ${op.tier}">${op.tier}</span></td>
+      ${calcSLACell(op)}
       <td>${estadoBtn}</td>
       <td class="breakdown">${op.estado==='HECHO'?fmtTime(op.completado_en):'--'}</td>
       <td style="min-width:160px;">
@@ -2047,6 +2144,72 @@ async function saveObs(uid, value){
     await store.set('ops:'+currentDate, JSON.stringify(seguimientoOps));
     gsLogRows([op], op.analista||currentUser, currentDate);
   } catch(e){ console.error('Error saving obs:', e); }
+}
+
+// ─── RESUMEN DE CIERRE ──────────────────────────────────────────────────────
+function generarResumenCierre(){
+  if(!seguimientoOps.length){ alert('No hay operaciones cargadas para resumir.'); return; }
+  const total = seguimientoOps.length;
+  const hechos = seguimientoOps.filter(o=>o.estado==='HECHO').length;
+  const pendientes = total - hechos;
+  const pct = Math.round((hechos/total)*100);
+
+  // Por analista
+  const porAnalista = {};
+  seguimientoOps.forEach(op=>{
+    const n = op.analista||'Sin asignar';
+    if(!porAnalista[n]) porAnalista[n]={total:0,hechos:0};
+    porAnalista[n].total++;
+    if(op.estado==='HECHO') porAnalista[n].hechos++;
+  });
+
+  // Por producto
+  const porProducto = {};
+  seguimientoOps.forEach(op=>{
+    const p = op.productName||op.productKey;
+    if(!porProducto[p]) porProducto[p]={total:0,hechos:0};
+    porProducto[p].total++;
+    if(op.estado==='HECHO') porProducto[p].hechos++;
+  });
+
+  // Sin RUT
+  const sinId = seguimientoOps.filter(o=>!(o.identificador||'').trim()).length;
+
+  const nl = '\n';
+  let resumen = '=== RESUMEN CIERRE ' + currentDate + ' ===' + nl + nl;
+  resumen += 'AVANCE GENERAL' + nl;
+  resumen += 'Total: '+total+' ops | Hechas: '+hechos+' | Pendientes: '+pendientes+' | Avance: '+pct+'%' + nl + nl;
+  resumen += 'POR ANALISTA' + nl;
+  Object.entries(porAnalista).sort((a,b)=>b[1].hechos-a[1].hechos).forEach(([n,v])=>{
+    const p = Math.round((v.hechos/v.total)*100);
+    resumen += n+': '+v.hechos+'/'+v.total+' ('+p+'%)' + nl;
+  });
+  resumen += nl + 'POR PRODUCTO' + nl;
+  Object.entries(porProducto).forEach(([p,v])=>{
+    resumen += p+': '+v.hechos+'/'+v.total + nl;
+  });
+  if(sinId>0) resumen += nl + 'ADVERTENCIA: '+sinId+' operacion(es) sin RUT/ID' + nl;
+  if(pendientes>0){
+    resumen += nl + 'PENDIENTES POR ANALISTA' + nl;
+    Object.entries(porAnalista).forEach(([n,v])=>{
+      if(v.total-v.hechos>0) resumen += n+': '+(v.total-v.hechos)+' pendientes' + nl;
+    });
+  }
+
+
+  // Mostrar en modal y guardar en GS
+  const modal = document.createElement('div');
+  modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:3000;display:flex;align-items:center;justify-content:center;';
+  modal.innerHTML=`<div style="background:var(--white);border-radius:12px;padding:24px;max-width:500px;width:90%;max-height:80vh;overflow-y:auto;">
+    <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:14px;">Resumen de cierre — ${currentDate}</div>
+    <pre style="font-size:12px;font-family:monospace;white-space:pre-wrap;background:var(--gray-bg);padding:14px;border-radius:8px;line-height:1.7;">${resumen}</pre>
+    <div style="display:flex;gap:10px;margin-top:16px;">
+      <button class="btn-primary" onclick="navigator.clipboard.writeText(${JSON.stringify(resumen)}).then(()=>alert('Copiado al portapapeles'))">Copiar</button>
+      <button class="btn-secondary" onclick="this.closest('div[style*=fixed]').remove()">Cerrar</button>
+    </div>
+  </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click',e=>{ if(e.target===modal) modal.remove(); });
 }
 
 // ─── INIT ───────────────────────────────────────────────────────────────────
