@@ -308,6 +308,7 @@ tr:last-child td{border-bottom:none;}
       Si el botón aparece atenuado (opaco), selecciona tu nombre en el menú arriba a la derecha para activar tu turno.
     </div>
     <div class="stats-row" id="seg-stats"></div>
+    <div id="seg-analista-bars" style="margin-bottom:14px;display:flex;flex-wrap:wrap;gap:10px;"></div>
     <div class="filters">
       <span class="filter-label">Filtrar:</span>
       <select id="filter-analista" onchange="renderSeguimiento()"><option value="">Todos los analistas</option></select>
@@ -317,6 +318,7 @@ tr:last-child td{border-bottom:none;}
         <option value="HECHO">Hecho</option>
       </select>
       <select id="filter-producto" onchange="renderSeguimiento()"><option value="">Todos los productos</option></select>
+      <button id="btn-filter-review" onclick="toggleFilterReview()" style="padding:6px 12px;border-radius:6px;border:1px solid var(--magenta);background:var(--white);color:var(--magenta);font-size:12px;font-weight:600;cursor:pointer;">⚠ Revisar asignación</button>
     </div>
     <table>
       <thead>
@@ -1694,20 +1696,25 @@ async function cargarDesdeMaestro(){
       return rutExists || existingIdOps.has(op.id_operacion);
     });
 
+    // Resumen previo antes de cargar
+    const esGenPrev = o => ['producdigitalriesgo','primera iteracion','primera iteración',''].includes((o.analista_actual||'').trim().toLowerCase());
+    const rv = ops.filter(o=>o.tier==='vencido').length;
+    const ru = ops.filter(o=>o.tier==='urgente').length;
+    const rnr = ops.filter(o=>o.tier==='normal'&&!esGenPrev(o)).length;
+    const rng = ops.filter(o=>o.tier==='normal'&&esGenPrev(o)).length;
+    const okPrev = window.confirm(
+      'Se encontraron '+ops.length+' operaciones MHE pendientes:'+
+      '\nVencidas: '+rv+' | Urgentes: '+ru+
+      '\nNormales analista real: '+rnr+' | Normales producdigital: '+rng+
+      '\n\nCapacidad MHE disponible: '+capacidadRestante+' ops'+
+      '\n\nAceptar = cargar | Cancelar = no cargar'
+    );
+    if(!okPrev){ btn.disabled=false; btn.textContent='↓ Cargar desde Sheet maestro'; return; }
+
     if(duplicados.length > 0){
-      const lista = duplicados.slice(0,8).map(o=>{
-        const existing = dayOps.find(d=>
-          (d.identificador||'').replace(/[\.\-\s]/g,'').toLowerCase() === op.rut.replace(/[\.\-\s]/g,'').toLowerCase() ||
-          d._id_operacion === o.id_operacion
-        );
-        return '• RUT '+o.rut+' ('+o.segmento+')' + (existing ? ' → ya asignada a '+( existing.analista||'Sin asignar') : '');
-      }).join('|');
-      const mas = duplicados.length > 8 ? '\n... y '+(duplicados.length-8)+' más.' : '';
-      const continuar = window.confirm(
-        'Se detectaron '+duplicados.length+' operaciones que ya estan cargadas hoy:\n\n'+lista+mas+
-        '\n\nAceptar = cargar solo las operaciones nuevas (omitir duplicados)\nCancelar = no cargar nada'
-      );
-      if(!continuar){ btn.disabled=false; btn.textContent='↓ Cargar desde Sheet maestro'; return; }
+      const listaD = duplicados.slice(0,5).map(o=>'RUT '+o.rut+' ('+o.segmento+')').join(', ');
+      const okDup = window.confirm('Hay '+duplicados.length+' duplicados: '+listaD+'. Aceptar = omitir duplicados. Cancelar = no cargar nada.');
+      if(!okDup){ btn.disabled=false; btn.textContent='↓ Cargar desde Sheet maestro'; return; }
     }
 
     let nuevas = 0;
@@ -1947,12 +1954,24 @@ function populateFilters(){
   fa.value=prev_a; fp.value=prev_p;
 }
 
+var _filterReview = false;
+function toggleFilterReview(){
+  _filterReview = !_filterReview;
+  const btn = document.getElementById('btn-filter-review');
+  if(btn){
+    btn.style.background = _filterReview ? 'var(--magenta)' : 'var(--white)';
+    btn.style.color = _filterReview ? 'var(--white)' : 'var(--magenta)';
+  }
+  renderSeguimiento();
+}
+
 function renderSeguimiento(){
   const fa=document.getElementById('filter-analista').value;
   const fe=document.getElementById('filter-estado').value;
   const fp=document.getElementById('filter-producto').value;
   let ops=seguimientoOps.filter(o=>
-    (!fa||o.analista===fa)&&(!fe||o.estado===fe)&&(!fp||o.productKey===fp)
+    (!fa||o.analista===fa)&&(!fe||o.estado===fe)&&(!fp||o.productKey===fp)&&
+    (!_filterReview||o._needs_review)
   );
 
   const total=seguimientoOps.length;
@@ -1964,6 +1983,33 @@ function renderSeguimiento(){
     <div class="stat ${total-hechos>0?'warn':'ok'}"><div class="snum">${total-hechos}</div><div class="slbl">Pendientes</div></div>
     <div class="stat ${pct<50?'warn':'ok'}"><div class="snum">${pct}%</div><div class="slbl">Avance</div></div>
   `;
+  // Barras de progreso por analista
+  const barsEl = document.getElementById('seg-analista-bars');
+  if(barsEl && seguimientoOps.length){
+    const porAnalista = {};
+    seguimientoOps.forEach(o=>{
+      const n = o.analista||'Sin asignar';
+      if(!porAnalista[n]) porAnalista[n]={total:0,hechos:0};
+      porAnalista[n].total++;
+      if(o.estado==='HECHO') porAnalista[n].hechos++;
+    });
+    barsEl.innerHTML = Object.entries(porAnalista)
+      .sort((a,b)=>b[1].total-a[1].total)
+      .map(([n,v])=>{
+        const p=Math.round((v.hechos/v.total)*100);
+        const color = p===100?'var(--teal)':p>=50?'var(--cyan)':'var(--amber)';
+        return `<div style="background:var(--white);border:1px solid var(--gray-line);border-radius:8px;padding:8px 12px;min-width:140px;flex:1;">
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+            <span style="font-size:12px;font-weight:600;">${n}</span>
+            <span style="font-size:11px;color:var(--gray-text);">${v.hechos}/${v.total}</span>
+          </div>
+          <div style="height:6px;background:var(--gray-bg);border-radius:4px;">
+            <div style="height:100%;width:${p}%;background:${color};border-radius:4px;transition:width .3s;"></div>
+          </div>
+          <div style="font-size:10px;color:${color};margin-top:2px;font-weight:600;">${p}%</div>
+        </div>`;
+      }).join('');
+  }
 
   if(ops.length===0){
     document.getElementById('seg-body').innerHTML='';
@@ -2399,6 +2445,8 @@ async function saveAnalista(){
   statusEl.style.color = ok ? 'var(--teal)' : 'var(--red)';
   renderEquipo();
   initUserSelect(); // actualizar selector de usuario
+  initAvailability(); // actualizar chips de disponibilidad
+  recalcPlan(); // actualizar distribución en Planificación
   setTimeout(closeEquipoModal, 800);
 }
 
@@ -2412,6 +2460,8 @@ async function removeAnalista(nombre){
   await saveTeamToGS();
   renderEquipo();
   initUserSelect();
+  initAvailability();
+  recalcPlan();
 }
 
 // ─── INIT ───────────────────────────────────────────────────────────────────
