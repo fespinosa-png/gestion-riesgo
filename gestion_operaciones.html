@@ -208,6 +208,7 @@ tr:last-child td{border-bottom:none;}
   <div class="nav-tab" onclick="goTo('ops')">Operaciones</div>
   <div class="nav-tab" onclick="goTo('seguimiento')">Seguimiento</div>
   <div class="nav-tab" id="mi-turno-tab" onclick="goTo('miturno')">Mi turno</div>
+  <div class="nav-tab" id="equipo-tab" onclick="goTo('equipo')">Equipo</div>
   <div class="nav-tab" onclick="goTo('historial')">Historial</div>
   <div class="right">
     <span class="date-badge" id="date-badge"></span>
@@ -278,7 +279,13 @@ tr:last-child td{border-bottom:none;}
     <div id="ops-entry-panels"></div>
     <div id="dup-status" style="margin-bottom:8px;"></div>
     <div class="btn-row" id="confirm-btn-row">
-      <button class="btn-primary" onclick="confirmDay()">Confirmar y guardar reparto -- <span id="confirm-date-label"></span></button>
+      <button class="btn-primary" onclick="confirmDay()">Confirmar y guardar reparto</button>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--gray-text);">
+        <label style="font-weight:600;">Fecha del reparto:</label>
+        <input type="date" id="confirm-date-input" style="padding:5px 8px;border:1px solid var(--gray-line);border-radius:6px;font-size:12px;"
+          onchange="currentDate=this.value;updateConfirmDateLabel();">
+        <span style="font-size:11px;color:var(--gray-text);">(puedes asignar para mañana)</span>
+      </div>
       <span id="confirm-status" style="font-size:12px;color:var(--gray-text);"></span>
     </div>
   </div>
@@ -320,6 +327,56 @@ tr:last-child td{border-bottom:none;}
       <tbody id="seg-body"></tbody>
     </table>
     <div id="seg-empty"></div>
+  </div>
+</div>
+
+<!-- PAGE 5: EQUIPO -->
+<div class="page" id="page-equipo">
+  <div class="panel">
+    <div class="flex-between" style="margin-bottom:16px;">
+      <div class="panel-title" style="margin-bottom:0;">Gestión del equipo</div>
+      <button class="btn-teal" onclick="showAddAnalista()" style="font-size:12px;">+ Agregar analista</button>
+    </div>
+    <div id="equipo-status" style="font-size:12px;margin-bottom:12px;"></div>
+    <table id="equipo-table">
+      <thead><tr>
+        <th>Nombre</th><th>Rol</th><th>Productos</th><th>Estado</th><th>Acciones</th>
+      </tr></thead>
+      <tbody id="equipo-body"></tbody>
+    </table>
+  </div>
+  <!-- Add/Edit form modal -->
+  <div id="equipo-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;align-items:center;justify-content:center;">
+    <div style="background:var(--white);border-radius:14px;padding:28px;max-width:480px;width:90%;">
+      <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:16px;" id="equipo-modal-title">Agregar analista</div>
+      <div style="margin-bottom:12px;">
+        <label style="font-size:12px;font-weight:600;color:var(--gray-text);display:block;margin-bottom:4px;">Nombre</label>
+        <input id="eq-nombre" type="text" placeholder="Ej: Pedro" style="width:100%;padding:9px 12px;border:1px solid var(--gray-line);border-radius:8px;font-size:13px;">
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="font-size:12px;font-weight:600;color:var(--gray-text);display:block;margin-bottom:4px;">Rol</label>
+        <select id="eq-rol" style="width:100%;padding:9px 12px;border:1px solid var(--gray-line);border-radius:8px;font-size:13px;">
+          <option value="Analista">Analista</option>
+          <option value="Reserva">Reserva (solo en peaks)</option>
+          <option value="Analista Brasil">Analista Brasil</option>
+        </select>
+      </div>
+      <div style="margin-bottom:16px;">
+        <label style="font-size:12px;font-weight:600;color:var(--gray-text);display:block;margin-bottom:6px;">Productos</label>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;" id="eq-productos">
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" value="leasing"> Leasing</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" value="pie"> Pie Hipotecario</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" value="pv"> Primera Vivienda</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" value="subsidio"> Subsidio</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" value="brasil"> Brasil</label>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn-primary" onclick="saveAnalista()" id="eq-save-btn">Guardar</button>
+        <button class="btn-secondary" onclick="closeEquipoModal()">Cancelar</button>
+        <span id="eq-save-status" style="font-size:12px;align-self:center;"></span>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1051,17 +1108,19 @@ function goTo(tab){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('page-'+tab).classList.add('active');
-  const tabs = {plan:0,ops:1,seguimiento:2,miturno:3,historial:4};
+  const tabs = {plan:0,ops:1,seguimiento:2,miturno:3,equipo:4,historial:5};
   document.querySelectorAll('.nav-tab')[tabs[tab]].classList.add('active');
   if(tab==='seguimiento') loadSeguimiento();
   if(tab==='historial') loadHistorial();
   if(tab==='ops'){ loadOpsForToday().then(()=>{ buildOpsEntry(); updateConfirmDateLabel(); updateDraftBadge(); }); }
   if(tab==='miturno') loadMiTurno();
+  if(tab==='equipo') renderEquipo();
 }
 
 function updateConfirmDateLabel(){
-  const el = document.getElementById('confirm-date-label');
-  if(el) el.textContent = currentDate;
+  const input = document.getElementById('confirm-date-input');
+  if(input && !input.value) input.value = currentDate;
+  else if(input) currentDate = input.value;
 }
 
 // ─── USER ───────────────────────────────────────────────────────────────────
@@ -1092,7 +1151,7 @@ function updateNavForUser(v){
   if(miTurnoTab) miTurnoTab.style.display = (v && !isJefe) ? 'flex' : 'none';
   // Planificación y Operaciones: opacos y con tooltip para no-Jefe
   document.querySelectorAll('.nav-tab').forEach((tab, idx) => {
-    if(idx === 0 || idx === 1){ // Planificación y Operaciones
+    if(idx === 0 || idx === 1 || idx === 4){ // Planificación, Operaciones y Equipo
       tab.style.opacity = isJefe ? '1' : '0.4';
       tab.title = isJefe ? '' : 'Solo disponible para el Jefe de Riesgo';
       tab.style.cursor = isJefe ? 'pointer' : 'not-allowed';
@@ -1603,6 +1662,27 @@ async function cargarDesdeMaestro(){
       return;
     }
 
+    // Calcular capacidad restante del equipo activo para MHE (descontando lo ya cargado)
+    const mheAnalistas = TEAM.filter(t=>availability[t.name] && !t.products.includes('brasil') &&
+      (t.products.includes('pv') || t.products.includes('subsidio')));
+    const capMHE = mheAnalistas.reduce((sum)=>sum + (CAPS[dayType]||21), 0);
+    const opsYaCargadasMHE = dayOps.filter(o=>o.productKey==='pv'||o.productKey==='subsidio').length;
+    const capacidadRestante = Math.max(0, capMHE - opsYaCargadasMHE);
+    const genericos = ['producdigitalriesgo','primera iteracion','primera iteración',''];
+    const esGenerico = op => genericos.includes((op.analista_actual||'').trim().toLowerCase());
+
+    // Orden: vencidas reales → vencidas genéricos → urgentes reales → urgentes genéricos → normales reales → normales genéricos
+    // Todo limitado a la capacidad del equipo
+    ops.sort((a,b)=>{
+      const tierOrder = {vencido:0, urgente:1, normal:2};
+      if(tierOrder[a.tier] !== tierOrder[b.tier]) return tierOrder[a.tier] - tierOrder[b.tier];
+      // Dentro del mismo tier: analistas reales primero, genéricos después
+      const aGen = esGenerico(a)?1:0, bGen = esGenerico(b)?1:0;
+      if(aGen !== bGen) return aGen - bGen;
+      // Mismo tier y mismo tipo: mayor horas hábiles primero (más urgente)
+      return b.horas_habiles - a.horas_habiles;
+    });
+
     // Mapear a objetos dayOps — detectar duplicados y preguntar
     const existingIds = new Set(dayOps.map(o=>o.identificador));
     const existingIdOps = new Set(dayOps.map(o=>o._id_operacion).filter(Boolean));
@@ -1635,6 +1715,10 @@ async function cargarDesdeMaestro(){
       const rutNorm = op.rut.replace(/[\.\-\s]/g,'').toLowerCase();
       const rutExists = [...existingIds].some(id=>(id||'').replace(/[\.\-\s]/g,'').toLowerCase()===rutNorm);
       if(rutExists || existingIdOps.has(op.id_operacion)) return;
+      // Limitar normales de genéricos a la capacidad restante del equipo
+      if(op.tier==='normal' && esGenerico(op) && nuevas >= capacidadRestante){
+        return; // no cargar más normales de producdigitalriesgo que los que caben
+      }
 
       const productKey = op.segmento === 'Primera Vivienda' ? 'pv' : 'subsidio';
       const p = PRODUCTS.find(x=>x.key===productKey);
@@ -2212,11 +2296,131 @@ function generarResumenCierre(){
   modal.addEventListener('click',e=>{ if(e.target===modal) modal.remove(); });
 }
 
+// ─── GESTIÓN DE EQUIPO ──────────────────────────────────────────────────────
+var _editingAnalista = null; // nombre del analista que se está editando
+
+async function loadTeamFromGS(){
+  try{
+    const r = await store.get('config:team');
+    if(r && r.value){
+      const saved = JSON.parse(r.value);
+      if(Array.isArray(saved) && saved.length > 0){
+        // Merge: mantener analistas del código que no estén en GS, agregar los de GS
+        TEAM.length = 0;
+        saved.forEach(t=>TEAM.push(t));
+        CHILE_ANALYSTS.length = 0;
+        TEAM.filter(t=>!t.products.includes('brasil')).forEach(t=>CHILE_ANALYSTS.push(t.name));
+      }
+    }
+  } catch(e){ console.log('Usando equipo por defecto'); }
+}
+
+async function saveTeamToGS(){
+  try{
+    await store.set('config:team', JSON.stringify(TEAM));
+    return true;
+  } catch(e){ console.error('Error guardando equipo:', e); return false; }
+}
+
+function renderEquipo(){
+  const tbody = document.getElementById('equipo-body');
+  if(!tbody) return;
+  tbody.innerHTML = TEAM.map(t=>{
+    const prods = t.products.map(k=>PRODUCTS.find(p=>p.key===k)?.name||k).join(', ');
+    const rolBadge = t.reserve ? '<span class="role-badge reserva">Reserva</span>' :
+                     t.products.includes('brasil') ? '<span class="role-badge brasil">Brasil</span>' :
+                     '<span class="role-badge">Analista</span>';
+    const activo = availability[t.name] !== false;
+    return `<tr>
+      <td class="analyst-name">${t.name}</td>
+      <td>${rolBadge}</td>
+      <td class="breakdown" style="font-size:12px;">${prods}</td>
+      <td><span style="font-size:11px;font-weight:600;color:${activo?'var(--teal)':'var(--gray-text)'};">${activo?'Activo':'Inactivo'}</span></td>
+      <td>
+        <button class="btn-secondary" onclick="editAnalista('${t.name}')" style="font-size:11px;padding:4px 10px;margin-right:6px;">Editar</button>
+        <button onclick="removeAnalista('${t.name}')" style="font-size:11px;padding:4px 10px;border:1px solid var(--red);background:var(--red-light);color:var(--red);border-radius:6px;cursor:pointer;">Eliminar</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function showAddAnalista(){
+  _editingAnalista = null;
+  document.getElementById('equipo-modal-title').textContent = 'Agregar analista';
+  document.getElementById('eq-nombre').value = '';
+  document.getElementById('eq-rol').value = 'Analista';
+  document.querySelectorAll('#eq-productos input').forEach(cb=>cb.checked=false);
+  document.getElementById('eq-save-status').textContent = '';
+  document.getElementById('equipo-modal').style.display = 'flex';
+}
+
+function editAnalista(nombre){
+  _editingAnalista = nombre;
+  const t = TEAM.find(x=>x.name===nombre);
+  if(!t) return;
+  document.getElementById('equipo-modal-title').textContent = 'Editar analista: '+nombre;
+  document.getElementById('eq-nombre').value = t.name;
+  document.getElementById('eq-nombre').disabled = true;
+  document.getElementById('eq-rol').value = t.reserve ? 'Reserva' : (t.role||'Analista');
+  document.querySelectorAll('#eq-productos input').forEach(cb=>{
+    cb.checked = t.products.includes(cb.value);
+  });
+  document.getElementById('eq-save-status').textContent = '';
+  document.getElementById('equipo-modal').style.display = 'flex';
+}
+
+function closeEquipoModal(){
+  document.getElementById('equipo-modal').style.display = 'none';
+  document.getElementById('eq-nombre').disabled = false;
+}
+
+async function saveAnalista(){
+  const statusEl = document.getElementById('eq-save-status');
+  const nombre = document.getElementById('eq-nombre').value.trim();
+  const rol = document.getElementById('eq-rol').value;
+  const productos = [...document.querySelectorAll('#eq-productos input:checked')].map(cb=>cb.value);
+  if(!nombre){ statusEl.textContent = 'Ingresa un nombre.'; return; }
+  if(!productos.length){ statusEl.textContent = 'Selecciona al menos un producto.'; return; }
+  const reserve = rol === 'Reserva';
+  if(_editingAnalista){
+    const t = TEAM.find(x=>x.name===_editingAnalista);
+    if(t){ t.products=productos; t.role=rol; t.reserve=reserve; }
+  } else {
+    if(TEAM.find(x=>x.name===nombre)){ statusEl.textContent = 'Ya existe un analista con ese nombre.'; return; }
+    TEAM.push({name:nombre, products:productos, role:rol, reserve});
+    availability[nombre] = !reserve;
+  }
+  // Actualizar CHILE_ANALYSTS
+  CHILE_ANALYSTS.length = 0;
+  TEAM.filter(t=>!t.products.includes('brasil')).forEach(t=>CHILE_ANALYSTS.push(t.name));
+  statusEl.textContent = 'Guardando...';
+  const ok = await saveTeamToGS();
+  statusEl.textContent = ok ? '✓ Guardado' : '✗ Error al guardar';
+  statusEl.style.color = ok ? 'var(--teal)' : 'var(--red)';
+  renderEquipo();
+  initUserSelect(); // actualizar selector de usuario
+  setTimeout(closeEquipoModal, 800);
+}
+
+async function removeAnalista(nombre){
+  if(!confirm('Eliminar a '+nombre+' del equipo? Esta accion no se puede deshacer.')) return;
+  const idx = TEAM.findIndex(t=>t.name===nombre);
+  if(idx>=0) TEAM.splice(idx,1);
+  delete availability[nombre];
+  CHILE_ANALYSTS.length = 0;
+  TEAM.filter(t=>!t.products.includes('brasil')).forEach(t=>CHILE_ANALYSTS.push(t.name));
+  await saveTeamToGS();
+  renderEquipo();
+  initUserSelect();
+}
+
 // ─── INIT ───────────────────────────────────────────────────────────────────
 initDate();
 initUserSelect();
 initAvailability();
 buildProdGrid();
+// Cargar equipo desde GS (configuracion persistente)
+loadTeamFromGS().then(()=>{ renderEquipo(); initUserSelect(); });
 // Auto-detectar tipo de día
 dayType = autoDetectDayType();
 recalcPlan();
