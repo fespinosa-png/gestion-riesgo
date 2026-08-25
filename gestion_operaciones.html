@@ -1857,19 +1857,20 @@ async function confirmDay(){
   statusEl.textContent='Guardando...';
   try{
     const vols=getVolumes();
-    // Preservar estados HECHO/observaciones del equipo antes de guardar
-    // (evita borrar avance cuando el Jefe reconfirma para actualizar un RUT o ajuste)
-    if(seguimientoOps && seguimientoOps.length){
-      const segMap = {};
-      seguimientoOps.forEach(o=>{ segMap[o.uid]=o; });
+    // Leer estado FRESCO de GS para preservar HECHO del equipo antes de reconfirmar
+    try{
+      const freshR = await store.get('ops:'+currentDate);
+      const freshOps = freshR&&freshR.value ? JSON.parse(freshR.value) : (seguimientoOps||[]);
+      const freshMap = {};
+      freshOps.forEach(o=>{ freshMap[o.uid]=o; });
       dayOps.forEach(op=>{
-        const seg = segMap[op.uid];
-        if(seg){
-          if(seg.estado==='HECHO'){ op.estado='HECHO'; op.completado_en=seg.completado_en; }
-          if(seg.obs_seguimiento) op.obs_seguimiento=seg.obs_seguimiento;
+        const fresh = freshMap[op.uid];
+        if(fresh){
+          if(fresh.estado==='HECHO'){ op.estado='HECHO'; op.completado_en=fresh.completado_en; }
+          if(fresh.obs_seguimiento) op.obs_seguimiento=fresh.obs_seguimiento;
         }
       });
-    }
+    } catch(e){ console.error('No se pudo leer GS antes de confirmar:', e); }
     await store.set('ops:'+currentDate, JSON.stringify(dayOps));
     await store.set('meta:'+currentDate, JSON.stringify({
       date:currentDate, dayType, volumes:vols, distribution:planDistribution,
@@ -2069,14 +2070,22 @@ async function toggleEstado(uid){
   op.estado=op.estado==='PENDIENTE'?'HECHO':'PENDIENTE';
   op.completado_en=op.estado==='HECHO'?new Date().toISOString():null;
   dayOps=seguimientoOps.map(o=>({...o}));
-  // Guardar backup local al instante (no espera GS)
   saveLocalBackup(seguimientoOps);
-  // Renderizar ANTES de esperar GS
   renderSeguimiento();
-  // Guardar en GS en segundo plano
-  store.set('ops:'+currentDate, JSON.stringify(seguimientoOps))
-    .then(()=>{ gsLogRows([op], op.analista||currentUser, currentDate); })
-    .catch(e=>{ console.error('Error guardando en GS (cambio preservado localmente):', e); });
+  // Leer estado fresco de GS antes de guardar para evitar sobrescribir cambios de otros analistas
+  store.get('ops:'+currentDate).then(r=>{
+    const gsOps = r&&r.value ? JSON.parse(r.value) : [];
+    // Fusionar: aplicar cambio local sobre estado fresco de GS
+    const merged = gsOps.length ? gsOps.map(o=>{
+      if(o.uid===op.uid) return {...o, estado:op.estado, completado_en:op.completado_en};
+      // Preservar HECHO de GS que no tengamos en local
+      const local = seguimientoOps.find(s=>s.uid===o.uid);
+      if(local && local.estado==='HECHO') return {...o, estado:'HECHO', completado_en:local.completado_en, obs_seguimiento:local.obs_seguimiento||o.obs_seguimiento};
+      return o;
+    }) : seguimientoOps;
+    return store.set('ops:'+currentDate, JSON.stringify(merged));
+  }).then(()=>{ gsLogRows([op], op.analista||currentUser, currentDate); })
+    .catch(e=>{ console.error('Error guardando en GS:', e); });
 }
 
 // ─── HISTORIAL PAGE ──────────────────────────────────────────────────────────
@@ -2519,11 +2528,11 @@ setInterval(async function(){
   const segActive = document.getElementById('page-seguimiento').classList.contains('active');
   const miTurnoActive = document.getElementById('page-miturno').classList.contains('active');
   if(!segActive && !miTurnoActive) return;
-  // No interrumpir si el usuario acaba de hacer algo (< 10 seg)
-  if(Date.now() - _lastRefresh < 10000) return;
+  // Seguimiento: siempre refrescar — el Jefe necesita ver cambios en tiempo real
+  // Mi turno: respetar pausa si el analista está trabajando activamente
   if(segActive) await silentRefreshSeguimiento();
-  if(miTurnoActive) await loadMiTurno();
-}, 120000); // 2 minutos
+  if(miTurnoActive && Date.now() - _lastRefresh > 15000) await loadMiTurno();
+}, 30000); // 30 segundos
 
 // Registrar actividad del usuario para no interrumpir mientras trabaja
 ['click','keydown'].forEach(ev => document.addEventListener(ev, ()=>{ _lastRefresh = Date.now(); }));
