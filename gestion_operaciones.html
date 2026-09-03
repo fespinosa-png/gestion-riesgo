@@ -1037,8 +1037,25 @@ function productLabels(name){
 }
 
 // ─── AVAILABILITY ───────────────────────────────────────────────────────────
+function saveAvailability(){
+  try{ localStorage.setItem('avail:'+currentDate, JSON.stringify(availability)); } catch(e){}
+}
+
+function loadAvailability(){
+  try{
+    const saved = localStorage.getItem('avail:'+currentDate);
+    if(saved){
+      const parsed = JSON.parse(saved);
+      // Solo restaurar si tiene entradas válidas del equipo actual
+      if(TEAM.some(t=>t.name in parsed)){ Object.assign(availability, parsed); return true; }
+    }
+  } catch(e){}
+  return false;
+}
+
 function initAvailability(){
-  TEAM.forEach(t => { availability[t.name] = !t.reserve; }); // reservas inician inactivos
+  TEAM.forEach(t => { availability[t.name] = !t.reserve; }); // default
+  loadAvailability(); // sobrescribir con lo guardado si existe
   renderAvailGrid();
 }
 
@@ -1050,6 +1067,7 @@ function toggleAvailability(name){
     return;
   }
   availability[name] = !availability[name];
+  saveAvailability();
   renderAvailGrid();
   recalcPlan();
 }
@@ -1179,7 +1197,38 @@ function setDayType(t){
   document.getElementById('btn-lj').classList.toggle('active', t==='LJ');
   document.getElementById('btn-v').classList.toggle('active', t==='V');
   const fdsBtn=document.getElementById('btn-fds'); if(fdsBtn) fdsBtn.classList.toggle('active', t==='FDS');
+  savePlanConfig();
   recalcPlan();
+}
+
+function savePlanConfig(){
+  try{
+    const vols={};
+    PRODUCTS.forEach(p=>{
+      const tv=document.getElementById('vol-'+p.key);
+      const tu=document.getElementById('urg-'+p.key);
+      if(tv) vols[p.key]={total:tv.value, urgent:tu?tu.value:0};
+    });
+    localStorage.setItem('plan:'+currentDate, JSON.stringify({dayType, vols}));
+  }catch(e){}
+}
+
+function loadPlanConfig(){
+  try{
+    const saved=localStorage.getItem('plan:'+currentDate);
+    if(!saved) return false;
+    const cfg=JSON.parse(saved);
+    if(cfg.dayType) dayType=cfg.dayType;
+    if(cfg.vols){
+      Object.entries(cfg.vols).forEach(([key,v])=>{
+        const tv=document.getElementById('vol-'+key);
+        const tu=document.getElementById('urg-'+key);
+        if(tv) tv.value=v.total||0;
+        if(tu) tu.value=v.urgent||0;
+      });
+    }
+    return true;
+  }catch(e){ return false; }
 }
 
 // ─── PLAN PAGE ──────────────────────────────────────────────────────────────
@@ -1189,9 +1238,9 @@ function buildProdGrid(){
     <div class="prod-card">
       <div class="pname">${p.name}</div>
       <div class="pmeta">SLA ${p.slaH}h · ${p.idType} · líder ${p.leader}</div>
-      <input type="number" min="0" id="vol-${p.key}" value="${p.dflt}" oninput="recalcPlan()">
+      <input type="number" min="0" id="vol-${p.key}" value="${p.dflt}" oninput="recalcPlan();savePlanConfig();">
       <div class="urg-label">Vencen hoy</div>
-      <input type="number" min="0" class="urg" id="urg-${p.key}" value="0" oninput="recalcPlan()">
+      <input type="number" min="0" class="urg" id="urg-${p.key}" value="0" oninput="recalcPlan();savePlanConfig();">
     </div>
   `).join('');
 }
@@ -2480,9 +2529,15 @@ initAvailability();
 buildProdGrid();
 // Cargar equipo desde GS (configuracion persistente)
 loadTeamFromGS().then(()=>{ renderEquipo(); initUserSelect(); });
-// Auto-detectar tipo de día
+// Auto-detectar tipo de día, luego restaurar planificación guardada si existe
 dayType = autoDetectDayType();
 recalcPlan();
+if(loadPlanConfig()){
+  document.getElementById('btn-lj').classList.toggle('active', dayType==='LJ');
+  document.getElementById('btn-v').classList.toggle('active', dayType==='V');
+  const fdsBtn=document.getElementById('btn-fds'); if(fdsBtn) fdsBtn.classList.toggle('active', dayType==='FDS');
+  recalcPlan();
+}
 showStorageBanner();
 updateConfirmDateLabel();
 updateConfirmDateLabel();
@@ -2491,7 +2546,7 @@ updateConfirmDateLabel();
   try{
     const keys = Object.keys(localStorage);
     keys.forEach(k => {
-      if(k.startsWith('backup:ops:') && !k.endsWith(currentDate)){
+      if((k.startsWith('backup:ops:') || k.startsWith('avail:') || k.startsWith('plan:')) && !k.endsWith(currentDate)){
         localStorage.removeItem(k);
       }
     });
