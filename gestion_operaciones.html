@@ -2388,11 +2388,18 @@ async function loadMiTurno(){
 
   if(!currentUser || currentUser === JEFE){
     cards.innerHTML='';
-    empty.innerHTML=`<div class="no-user-msg">
-      ${!currentUser
-        ? 'Selecciona tu nombre en la esquina superior derecha para ver tus operaciones.'
-        : 'Como Jefe de Riesgo, usa la pestaña <b>Seguimiento</b> para ver y gestionar las operaciones del equipo.'}
-    </div>`;
+    if(!currentUser){
+      empty.innerHTML=`<div style="text-align:center;padding:40px 20px;">
+        <div style="font-size:48px;margin-bottom:16px;">👆</div>
+        <div style="font-size:18px;font-weight:700;color:var(--navy);margin-bottom:8px;">¿Quién eres?</div>
+        <div style="font-size:14px;color:var(--gray-text);margin-bottom:20px;">Selecciona tu nombre arriba a la derecha para ver tus operaciones del día.</div>
+        <div style="background:var(--cyan-light);border:2px solid var(--cyan);border-radius:12px;padding:16px;display:inline-block;">
+          <div style="font-size:13px;font-weight:600;color:var(--teal);">👉 Busca el selector en la esquina superior derecha de la pantalla</div>
+        </div>
+      </div>`;
+    } else {
+      empty.innerHTML=`<div class="no-user-msg">Como Jefe de Riesgo, usa la pestaña <b>Seguimiento</b> para ver y gestionar las operaciones del equipo.</div>`;
+    }
     stats.innerHTML='';
     if(subtitle) subtitle.textContent='';
     return;
