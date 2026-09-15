@@ -198,6 +198,7 @@ tr:last-child td{border-bottom:none;}
   .dup-warning::before{content:"⚠";font-size:12px;}
   .op-row.has-dup input[type=text]{border-color:var(--red);background:var(--red-light);}
 </style>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 
@@ -354,6 +355,14 @@ tr:last-child td{border-bottom:none;}
       <div style="margin-bottom:12px;">
         <label style="font-size:12px;font-weight:600;color:var(--gray-text);display:block;margin-bottom:4px;">Nombre</label>
         <input id="eq-nombre" type="text" placeholder="Ej: Pedro" style="width:100%;padding:9px 12px;border:1px solid var(--gray-line);border-radius:8px;font-size:13px;">
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="font-size:12px;font-weight:600;color:var(--gray-text);display:block;margin-bottom:4px;">Email corporativo (para detección automática)</label>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <input id="eq-email" type="text" placeholder="Ej: jguerrero" style="flex:1;padding:9px 12px;border:1px solid var(--gray-line);border-radius:8px;font-size:13px;">
+          <span style="font-size:13px;color:var(--gray-text);">@creditu.com</span>
+        </div>
+        <div style="font-size:11px;color:var(--gray-text);margin-top:3px;">Solo la parte antes del @. Opcional — permite que la herramienta detecte al analista automáticamente.</div>
       </div>
       <div style="margin-bottom:12px;">
         <label style="font-size:12px;font-weight:600;color:var(--gray-text);display:block;margin-bottom:4px;">Rol</label>
@@ -561,6 +570,27 @@ function handleRequest(params) {
 
   // ── ping ──────────────────────────────────────────────────
   if (action === 'ping') return {ok: true, version: '2.0'};
+
+  // ── getHistorial: obtener días únicos con resumen ─────────
+  if (action === 'getHistorial') {
+    var sheet = getOpsSheet();
+    var result = buildUIDMap(sheet);
+    var days = {};
+    for (var i = 1; i < result.data.length; i++) {
+      var row = result.data[i];
+      if (!row[C.UID]) continue;
+      var rowDate = row[C.FECHA] instanceof Date
+        ? Utilities.formatDate(row[C.FECHA],'UTC','yyyy-MM-dd')
+        : (row[C.FECHA]||'').toString().slice(0,10);
+      if (!rowDate) continue;
+      if (!days[rowDate]) days[rowDate] = {date:rowDate, total:0, hechos:0, confirmedBy:''};
+      days[rowDate].total++;
+      if ((row[C.ESTADO]||'') === 'HECHO') days[rowDate].hechos++;
+      if (row[C.CONFIRMADO_POR] && !days[rowDate].confirmedBy) days[rowDate].confirmedBy = row[C.CONFIRMADO_POR];
+    }
+    var dayList = Object.values(days).sort(function(a,b){ return b.date.localeCompare(a.date); });
+    return {days: dayList};
+  }
 
   // ── getOps: leer todas las ops de una fecha ───────────────
   if (action === 'getOps') {
@@ -971,6 +1001,7 @@ async function gsGetOps(date){ return gsCall('getOps',{date}); }
 async function gsSetOps(date,ops,confirmedBy){ return gsCall('setOps',{date,ops,confirmedBy}); }
 async function gsMarkEstado(uid,estado,completado_en){ return gsCall('markEstado',{uid,estado,completado_en}); }
 async function gsUpdateField(uid,field,value){ return gsCall('updateField',{uid,field,value}); }
+async function gsGetHistorial(){ return gsCall('getHistorial',{}); }
 
 async function gsLogRows(ops, confirmedBy, date){
   if(getStoreMode()!=='gs') return; // solo en modo Google Sheets
@@ -1080,7 +1111,8 @@ var store = {
   async getOps(date){ try{ return await gsGetOps(date); }catch(e){ console.error('GS getOps:',e); return {ops:[]}; } },
   async setOps(date,ops,confirmedBy){ try{ return await gsSetOps(date,ops,confirmedBy); }catch(e){ console.error('GS setOps:',e); return {success:false}; } },
   async markEstado(uid,estado,ts){ try{ return await gsMarkEstado(uid,estado,ts); }catch(e){ console.error('GS markEstado:',e); } },
-  async updateField(uid,field,value){ try{ return await gsUpdateField(uid,field,value); }catch(e){ console.error('GS updateField:',e); } }
+  async updateField(uid,field,value){ try{ return await gsUpdateField(uid,field,value); }catch(e){ console.error('GS updateField:',e); } },
+  async getHistorial(){ try{ return await gsGetHistorial(); }catch(e){ console.error('GS getHistorial:',e); return {days:[]}; } }
 };
 
 function showStorageBanner(){ updateConnBadge(); }
@@ -1277,6 +1309,62 @@ function updateConfirmDateLabel(){
 }
 
 // ─── USER ───────────────────────────────────────────────────────────────────
+
+// -- Deteccion automatica de cuenta Google --------------------
+function matchGoogleEmailToTeam(email){
+  if(!email) return null;
+  const emailLow = email.toLowerCase();
+  const localPart = emailLow.split('@')[0];
+  // 1. Buscar primero en el equipo por email guardado (dinámico — configurado en pestaña Equipo)
+  const byEmail = TEAM.find(t=> t.email && (t.email.toLowerCase()===localPart || localPart.includes(t.email.toLowerCase())));
+  if(byEmail) return byEmail.name;
+  // 2. Mapa fijo como respaldo (emails hardcodeados)
+  const EMAIL_MAP = {
+    'jguerrero':'Josmar','vquintero':'Valentina','mcisternas':'Matias',
+    'aperdigon':'Andrea','cbarrera':'Camila','amena':'Argelis',
+    'icoelho':'Iliana','ijeldres':'Iliana','ygil':'Yusbreili','fespinosa':JEFE,
+    'matias':'Matias','josmar':'Josmar','valentina':'Valentina',
+    'ivan':'Ivan','camila':'Camila','andrea':'Andrea','argelis':'Argelis'
+  };
+  for(const [key, name] of Object.entries(EMAIL_MAP)){
+    if(localPart===key || localPart.includes(key)) return name;
+  }
+  // 3. Buscar por nombre en el email
+  const teamMatch = TEAM.find(t=>emailLow.includes(t.name.toLowerCase().split(' ')[0]));
+  return teamMatch ? teamMatch.name : null;
+}
+
+function tryAutoDetectUser(){
+  // Intentar leer el email desde la sesion de Google activa
+  // Usando google.accounts.id si esta disponible
+  if(typeof google === 'undefined' || !google.accounts || !google.accounts.id) return;
+  try{
+    // Solicitar credencial silenciosamente
+    google.accounts.id.initialize({
+      client_id: window.location.hostname,
+      callback: function(resp){
+        if(!resp || !resp.credential) return;
+        // Decodificar JWT para obtener email (sin validar - solo para UX)
+        try{
+          const payload = JSON.parse(atob(resp.credential.split('.')[1]));
+          const email = payload.email || '';
+          if(!email.endsWith('@creditu.com') && !email.endsWith('@creditumutual.cl')) return;
+          const nombre = matchGoogleEmailToTeam(email);
+          if(nombre && !currentUser){
+            setCurrentUser(nombre);
+            const sel = document.getElementById('user-select');
+            if(sel) sel.value = nombre;
+            console.log('Auto-detectado:', nombre, 'desde', email);
+          }
+        } catch(e){}
+      },
+      auto_select: true,
+      cancel_on_tap_outside: false
+    });
+    google.accounts.id.prompt();
+  } catch(e){ console.log('GSI no disponible:', e); }
+}
+
 function initUserSelect(){
   const sel = document.getElementById('user-select');
   // Limpiar todas las opciones antes de agregar — evita duplicados
@@ -2342,47 +2430,40 @@ async function toggleEstado(uid){
 // ─── HISTORIAL PAGE ──────────────────────────────────────────────────────────
 async function loadHistorial(){
   const container=document.getElementById('hist-body');
-  container.innerHTML='<div class="loading">Cargando historial...</div>';
-  let keys=[];
-  try{ const r=await store.list('meta:'); keys=r&&r.keys?r.keys:[]; }
-  catch(e){ container.innerHTML='<div class="empty">No se pudo cargar el historial.</div>'; return; }
-
-  const metas=[];
-  for(const k of keys){
-    try{ const r=await store.get(k); if(r&&r.value) metas.push(JSON.parse(r.value)); }
-    catch(e){}
+  container.innerHTML='<div class="loading">Cargando historial desde OperacionesV2...</div>';
+  try{
+    const r = await store.getHistorial();
+    const days = r&&r.days ? r.days : [];
+    if(!days.length){
+      container.innerHTML='<div class="empty">Todavia no hay operaciones registradas en OperacionesV2.</div>';
+      return;
+    }
+    container.innerHTML = days.map(d=>{
+      const pct = d.total>0 ? Math.round((d.hechos/d.total)*100) : 0;
+      const color = pct===100?'var(--teal)':pct>=50?'var(--cyan)':'var(--amber)';
+      return `<div class="hist-row">
+        <div class="hist-date">${d.date}</div>
+        <div class="hist-meta">${d.total} ops · confirmado por ${d.confirmedBy||'--'}</div>
+        <div class="prog-bar">
+          <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${color};"></div></div>
+          <div style="font-size:11px;color:var(--gray-text);margin-top:3px;">${d.hechos}/${d.total} hechos (${pct}%)</div>
+        </div>
+        <button class="btn-secondary" style="font-size:12px;padding:6px 12px;" onclick="verDia('${d.date}')">Ver detalle</button>
+      </div>`;
+    }).join('');
+  } catch(e){
+    container.innerHTML='<div class="empty">No se pudo cargar el historial.</div>';
   }
-  metas.sort((a,b)=>b.date.localeCompare(a.date));
-
-  if(!metas.length){ container.innerHTML='<div class="empty">Todavía no hay repartos confirmados.</div>'; return; }
-
-  const rows=await Promise.all(metas.map(async meta=>{
-    let ops=[];
-    try{ const r=await store.get('ops:'+meta.date); if(r&&r.value) ops=JSON.parse(r.value); }catch(e){}
-    const hechos=ops.filter(o=>o.estado==='HECHO').length;
-    const pct=ops.length>0?Math.round((hechos/ops.length)*100):0;
-    const dayLabel=meta.dayType==='LJ'?'Lun-Jue':'Viernes';
-    return `<div class="hist-row">
-      <div class="hist-date">${meta.date}</div>
-      <div class="hist-meta">${dayLabel} · ${meta.totalOps} ops · confirmado por ${meta.confirmedBy||'--'}</div>
-      <div class="prog-bar">
-        <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:var(--teal);"></div></div>
-        <div style="font-size:11px;color:var(--gray-text);margin-top:3px;">${hechos}/${ops.length} hechos (${pct}%)</div>
-      </div>
-      <button class="btn-secondary" style="font-size:12px;padding:6px 12px;" onclick="verDia('${meta.date}')">Ver detalle</button>
-    </div>`;
-  }));
-  container.innerHTML=rows.join('');
 }
 
 async function verDia(date){
   try{
-    const r=await store.get('ops:'+date);
-    seguimientoOps=r&&r.value?JSON.parse(r.value):[];
+    const r = await store.getOps(date);
+    seguimientoOps = r&&r.ops ? r.ops : [];
     currentDate=date;
     document.getElementById('date-badge').textContent=date;
     goTo('seguimiento');
-  } catch(e){ alert('No se pudieron cargar las operaciones de ese día.'); }
+  } catch(e){ alert('No se pudieron cargar las operaciones de ese dia.'); }
 }
 
 
@@ -2706,7 +2787,9 @@ function showAddAnalista(){
   _editingAnalista = null;
   document.getElementById('equipo-modal-title').textContent = 'Agregar analista';
   document.getElementById('eq-nombre').value = '';
+  document.getElementById('eq-nombre').disabled = false;
   document.getElementById('eq-rol').value = 'Analista';
+  document.getElementById('eq-email').value = '';
   document.querySelectorAll('#eq-productos input').forEach(cb=>cb.checked=false);
   document.getElementById('eq-save-status').textContent = '';
   document.getElementById('equipo-modal').style.display = 'flex';
@@ -2720,6 +2803,7 @@ function editAnalista(nombre){
   document.getElementById('eq-nombre').value = t.name;
   document.getElementById('eq-nombre').disabled = true;
   document.getElementById('eq-rol').value = t.reserve ? 'Reserva' : (t.role||'Analista');
+  document.getElementById('eq-email').value = t.email||'';
   document.querySelectorAll('#eq-productos input').forEach(cb=>{
     cb.checked = t.products.includes(cb.value);
   });
@@ -2736,16 +2820,17 @@ async function saveAnalista(){
   const statusEl = document.getElementById('eq-save-status');
   const nombre = document.getElementById('eq-nombre').value.trim();
   const rol = document.getElementById('eq-rol').value;
+  const email = (document.getElementById('eq-email').value||'').trim().toLowerCase().replace('@creditu.com','');
   const productos = [...document.querySelectorAll('#eq-productos input:checked')].map(cb=>cb.value);
   if(!nombre){ statusEl.textContent = 'Ingresa un nombre.'; return; }
   if(!productos.length){ statusEl.textContent = 'Selecciona al menos un producto.'; return; }
   const reserve = rol === 'Reserva';
   if(_editingAnalista){
     const t = TEAM.find(x=>x.name===_editingAnalista);
-    if(t){ t.products=productos; t.role=rol; t.reserve=reserve; }
+    if(t){ t.products=productos; t.role=rol; t.reserve=reserve; if(email) t.email=email; }
   } else {
     if(TEAM.find(x=>x.name===nombre)){ statusEl.textContent = 'Ya existe un analista con ese nombre.'; return; }
-    TEAM.push({name:nombre, products:productos, role:rol, reserve});
+    TEAM.push({name:nombre, products:productos, role:rol, reserve, email:email||''});
     availability[nombre] = !reserve;
   }
   // Actualizar CHILE_ANALYSTS
@@ -2787,7 +2872,7 @@ initUserSelect();
 initAvailability();
 buildProdGrid();
 // Cargar equipo desde GS (configuracion persistente)
-loadTeamFromGS().then(()=>{ renderEquipo(); initUserSelect(); });
+loadTeamFromGS().then(()=>{ renderEquipo(); initUserSelect(); setTimeout(tryAutoDetectUser, 1500); });
 // Auto-detectar tipo de día, luego restaurar planificación guardada si existe
 dayType = autoDetectDayType();
 recalcPlan();
