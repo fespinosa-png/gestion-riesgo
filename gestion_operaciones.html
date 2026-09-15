@@ -597,13 +597,35 @@ function handleRequest(params) {
     var sheet = getOpsSheet();
     var result = buildUIDMap(sheet);
     var ops = [];
-    for (var i = 1; i &lt; result.data.length; i++) {
+    for (var i = 1; i < result.data.length; i++) {
       var row = result.data[i];
       if (!row[C.UID]) continue;
       var rowDate = row[C.FECHA] instanceof Date
         ? Utilities.formatDate(row[C.FECHA],'UTC','yyyy-MM-dd')
         : (row[C.FECHA]||'').toString().slice(0,10);
       if (rowDate === date) ops.push(rowToOp(row));
+    }
+    // Fallback: si OperacionesV2 no tiene datos para esta fecha,
+    // leer desde GestionOps (JSON blob v1) y migrar automaticamente
+    if (ops.length === 0) {
+      var ss = SpreadsheetApp.getActiveSpreadsheet();
+      var legacySheet = ss.getSheetByName('GestionOps');
+      if (legacySheet) {
+        var legacyData = legacySheet.getDataRange().getValues();
+        for (var lj = 1; lj < legacyData.length; lj++) {
+          if (legacyData[lj][0] === 'ops:' + date && legacyData[lj][1]) {
+            try {
+              var legacyOps = JSON.parse(legacyData[lj][1]);
+              if (legacyOps && legacyOps.length > 0) {
+                // Migrar a OperacionesV2 automaticamente
+                var newRows = legacyOps.map(function(op){ return opToRow(op, date, ''); });
+                sheet.getRange(result.total+1, 1, newRows.length, NCOLS).setValues(newRows);
+                return {ops: legacyOps, total: legacyOps.length, migrated: true};
+              }
+            } catch(e) {}
+          }
+        }
+      }
     }
     return {ops: ops, total: ops.length};
   }
@@ -647,13 +669,37 @@ function handleRequest(params) {
     var sheet = getOpsSheet();
     var res = buildUIDMap(sheet);
     var uid = params.uid;
-    if (!res.map[uid]) return {error: 'UID no encontrado: ' + uid};
-    var rowNum = res.map[uid].row;
-    sheet.getRange(rowNum, C.ESTADO+1).setValue(params.estado || 'PENDIENTE');
-    sheet.getRange(rowNum, C.COMPLETADO_EN+1).setValue(
-      params.completado_en ? new Date(params.completado_en) : ''
-    );
-    return {success: true};
+    if (res.map[uid]) {
+      // v2.0: actualizar fila en OperacionesV2
+      var rowNum = res.map[uid].row;
+      sheet.getRange(rowNum, C.ESTADO+1).setValue(params.estado || 'PENDIENTE');
+      sheet.getRange(rowNum, C.COMPLETADO_EN+1).setValue(
+        params.completado_en ? new Date(params.completado_en) : ''
+      );
+      return {success: true};
+    } else {
+      // Fallback v1.0: actualizar JSON blob en GestionOps
+      var ss = SpreadsheetApp.getActiveSpreadsheet();
+      var legacySheet = ss.getSheetByName('GestionOps');
+      if (!legacySheet) return {error: 'UID no encontrado: ' + uid};
+      var legacyData = legacySheet.getDataRange().getValues();
+      for (var k = 1; k < legacyData.length; k++) {
+        if (legacyData[k][0] && legacyData[k][0].toString().startsWith('ops:') && legacyData[k][1]) {
+          try {
+            var ops = JSON.parse(legacyData[k][1]);
+            var opIdx = ops.findIndex(function(o){ return o.uid === uid; });
+            if (opIdx >= 0) {
+              ops[opIdx].estado = params.estado || 'PENDIENTE';
+              ops[opIdx].completado_en = params.completado_en || null;
+              legacySheet.getRange(k+1, 2).setValue(JSON.stringify(ops));
+              legacySheet.getRange(k+1, 3).setValue(new Date().toISOString());
+              return {success: true, legacy: true};
+            }
+          } catch(e) {}
+        }
+      }
+      return {error: 'UID no encontrado en v1 ni v2: ' + uid};
+    }
   }
 
   // ── updateField: actualizar 1 campo de 1 op ───────────────
