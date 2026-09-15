@@ -1279,6 +1279,8 @@ function updateConfirmDateLabel(){
 // ─── USER ───────────────────────────────────────────────────────────────────
 function initUserSelect(){
   const sel = document.getElementById('user-select');
+  // Limpiar todas las opciones antes de agregar — evita duplicados
+  sel.innerHTML = '';
   const opts = [JEFE, ...TEAM.map(t=>t.name)];
   opts.forEach(n=>{
     const o = document.createElement('option');
@@ -1286,7 +1288,12 @@ function initUserSelect(){
     sel.appendChild(o);
   });
   const saved = localStorage.getItem('gestion_user');
-  if(saved){ sel.value = saved; currentUser = saved; }
+  if(saved && opts.includes(saved)){ sel.value = saved; currentUser = saved; }
+  else if(saved && !opts.includes(saved)){
+    // Analista guardado ya no existe en el equipo — resetear
+    localStorage.removeItem('gestion_user');
+    currentUser = '';
+  }
   updateNavForUser(currentUser);
 }
 
