@@ -2029,8 +2029,9 @@ async function loadOpsForToday(){
     if(r && r.value){
       const gsOps = JSON.parse(r.value);
       if(gsOps && gsOps.length){
-        dayOps = gsOps;
-        saveDraft(); // guardar como borrador local para próximas visitas
+        // Marcar como ya guardadas (vienen de GS)
+        dayOps = gsOps.map(op=>({...op, _saved:true}));
+        saveDraft();
       }
     }
   } catch(e){ console.log('No se pudo cargar desde GS:', e); }
@@ -2066,7 +2067,8 @@ async function confirmDay(){
     if(!proceed) return;
   }
 
-  statusEl.textContent='Guardando...';
+  const opsNuevas = dayOps.filter(op=>!op._saved).length;
+  statusEl.textContent='Guardando '+(opsNuevas > 0 ? opsNuevas : dayOps.length)+' operación(es)...';
   try{
     const vols=getVolumes();
     // Preservar HECHO: usar seguimientoOps local primero (más confiable que GS en red lenta)
@@ -2091,8 +2093,16 @@ async function confirmDay(){
       const h = hechodMap[op.uid];
       if(h){ op.estado='HECHO'; op.completado_en=h.completado_en; op.obs_seguimiento=h.obs_seguimiento||op.obs_seguimiento; }
     });
-    // v2.0: usar setOps (1 fila por op, sin race conditions)
-    await store.setOps(currentDate, dayOps, currentUser||'--');
+    // Las ops con HECHO ya guardado no necesitan re-enviarse
+    dayOps.forEach(op=>{ if(op.estado==='HECHO' && hechodMap[op.uid]) op._saved=true; });
+    // v2.0: enviar solo ops nuevas o modificadas (no todas)
+    const opsToSave = dayOps.filter(op => !op._saved);
+    if(opsToSave.length > 0){
+      await store.setOps(currentDate, opsToSave, currentUser||'--');
+      // Marcar como guardadas en memoria
+      dayOps.forEach(op => { op._saved = true; });
+      saveDraft();
+    }
     await store.set('meta:'+currentDate, JSON.stringify({
       date:currentDate, dayType, volumes:vols, distribution:planDistribution,
       confirmedAt:new Date().toISOString(), confirmedBy:currentUser||'--',
@@ -2108,8 +2118,14 @@ async function confirmDay(){
     statusEl.style.color='var(--amber)';
     setTimeout(async()=>{
       try{
-        // v2.0: usar setOps (1 fila por op, sin race conditions)
-    await store.setOps(currentDate, dayOps, currentUser||'--');
+        // v2.0: enviar solo ops nuevas o modificadas (no todas)
+    const opsToSave = dayOps.filter(op => !op._saved);
+    if(opsToSave.length > 0){
+      await store.setOps(currentDate, opsToSave, currentUser||'--');
+      // Marcar como guardadas en memoria
+      dayOps.forEach(op => { op._saved = true; });
+      saveDraft();
+    }
         statusEl.textContent='✓ Reparto guardado (reintento exitoso) '+new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});
         statusEl.style.color='var(--teal)';
         gsLogRows(dayOps, currentUser, currentDate);
