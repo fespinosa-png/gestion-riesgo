@@ -198,7 +198,6 @@ tr:last-child td{border-bottom:none;}
   .dup-warning::before{content:"⚠";font-size:12px;}
   .op-row.has-dup input[type=text]{border-color:var(--red);background:var(--red-light);}
 </style>
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 
@@ -2872,7 +2871,7 @@ initUserSelect();
 initAvailability();
 buildProdGrid();
 // Cargar equipo desde GS (configuracion persistente)
-loadTeamFromGS().then(()=>{ renderEquipo(); initUserSelect(); setTimeout(tryAutoDetectUser, 1500); });
+loadTeamFromGS().then(()=>{ renderEquipo(); initUserSelect(); });
 // Auto-detectar tipo de día, luego restaurar planificación guardada si existe
 dayType = autoDetectDayType();
 recalcPlan();
