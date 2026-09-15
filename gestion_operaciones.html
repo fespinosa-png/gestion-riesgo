@@ -454,7 +454,29 @@ tr:last-child td{border-bottom:none;}
           <b style="color:var(--ink);">3. Pega este código:</b>
           <div style="position:relative;margin:6px 0;">
             <button onclick="copyGsCode()" style="position:absolute;top:6px;right:6px;padding:3px 8px;font-size:10px;border:1px solid var(--gray-line);border-radius:4px;background:var(--white);cursor:pointer;z-index:1;">Copiar</button>
-            <pre id="gs-code-block" style="background:var(--ink);color:#e2e8f0;padding:12px;border-radius:6px;overflow-x:auto;font-size:11px;line-height:1.5;margin:0;">function doPost(e) {
+            <pre id="gs-code-block" style="background:#1e1e2e;color:#cdd6f4;padding:16px;border-radius:8px;font-size:11px;overflow-x:auto;max-height:300px;">// ============================================================
+// CREDITÚ — GESTIÓN DE RIESGO — Apps Script v2.0
+// Arquitectura: 1 fila por operación (elimina race conditions)
+// ============================================================
+
+var SHEET_OPS = 'OperacionesV2';
+var SHEET_MHE_ID = '10GQdpwjUMCQqEGGDCalWJV5FAupzJSyW8dULY9JDWbc';
+var SHEET_MHE_NAME_1 = 'SABANA_MAESTRA';
+var SHEET_MHE_NAME_2 = 'SÁBANA_MAESTRA';
+
+// Columnas de la hoja OperacionesV2 (índice 0 = col A)
+var C = {
+  UID:0, FECHA:1, ANALISTA:2, PRODUCTO:3, TIPO_ID:4,
+  IDENTIFICADOR:5, ESTADO:6, TIER:7, OBS:8,
+  ASIGNADO_EN:9, COMPLETADO_EN:10, CONFIRMADO_POR:11,
+  HORAS_HAB:12, ID_OP:13, NEEDS_REVIEW:14
+};
+var NCOLS = 15;
+var HEADERS = ['UID','Fecha','Analista','Producto','TipoID','Identificador',
+               'Estado','Tier','Observacion','AsignadoEn','CompletatadoEn',
+               'ConfirmadoPor','HorasHabiles','IDOperacion','NeedsReview'];
+
+function doPost(e) {
   try {
     var params = JSON.parse(e.postData.contents);
     var result = handleRequest(params);
@@ -468,20 +490,209 @@ tr:last-child td{border-bottom:none;}
   }
 }
 
-function handleRequest(params) {
+// ── Obtener / crear hoja ─────────────────────────────────────
+function getOpsSheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var action = params.action;
-
-  // ── Hoja de datos JSON (motor interno) ─────────────────────────────────────
-  var sheet = ss.getSheetByName('GestionOps');
+  var sheet = ss.getSheetByName(SHEET_OPS);
   if (!sheet) {
-    sheet = ss.insertSheet('GestionOps');
-    sheet.appendRow(['Clave', 'Datos', 'Actualizado']);
+    sheet = ss.insertSheet(SHEET_OPS);
+    sheet.getRange(1,1,1,NCOLS).setValues([HEADERS]);
+    sheet.getRange(1,1,1,NCOLS).setBackground('#002960').setFontColor('#FFFFFF').setFontWeight('bold');
     sheet.setFrozenRows(1);
   }
-  var data = sheet.getDataRange().getValues();
+  return sheet;
+}
 
+// ── Construir mapa UID → {row, data} ─────────────────────────
+function buildUIDMap(sheet) {
+  var data = sheet.getDataRange().getValues();
+  var map = {};
+  for (var i = 1; i &lt; data.length; i++) {
+    if (data[i][C.UID]) map[data[i][C.UID]] = {row: i+1, data: data[i]};
+  }
+  return {map: map, data: data, total: data.length};
+}
+
+// ── Convertir fila de Sheets a objeto op ─────────────────────
+function rowToOp(row) {
+  return {
+    uid:            row[C.UID] || '',
+    fecha:          row[C.FECHA] instanceof Date ? Utilities.formatDate(row[C.FECHA],'UTC','yyyy-MM-dd') : (row[C.FECHA]||'').toString().slice(0,10),
+    analista:       row[C.ANALISTA] || '',
+    productName:    row[C.PRODUCTO] || '',
+    idType:         row[C.TIPO_ID] || '',
+    identificador:  row[C.IDENTIFICADOR] || '',
+    estado:         row[C.ESTADO] || 'PENDIENTE',
+    tier:           row[C.TIER] || 'normal',
+    obs_seguimiento:row[C.OBS] || '',
+    asignado_en:    row[C.ASIGNADO_EN] instanceof Date ? row[C.ASIGNADO_EN].toISOString() : (row[C.ASIGNADO_EN]||''),
+    completado_en:  row[C.COMPLETADO_EN] instanceof Date ? row[C.COMPLETADO_EN].toISOString() : (row[C.COMPLETADO_EN]||''),
+    confirmedBy:    row[C.CONFIRMADO_POR] || '',
+    _horas_habiles: parseFloat(row[C.HORAS_HAB])||0,
+    _id_operacion:  row[C.ID_OP] || '',
+    _needs_review:  row[C.NEEDS_REVIEW] === true || row[C.NEEDS_REVIEW] === 'TRUE'
+  };
+}
+
+// ── Convertir objeto op a fila de Sheets ─────────────────────
+function opToRow(op, date, confirmedBy) {
+  var row = new Array(NCOLS).fill('');
+  row[C.UID]           = op.uid || '';
+  row[C.FECHA]         = date || op.fecha || '';
+  row[C.ANALISTA]      = op.analista || '';
+  row[C.PRODUCTO]      = op.productName || op.productKey || '';
+  row[C.TIPO_ID]       = op.idType || '';
+  row[C.IDENTIFICADOR] = op.identificador || '';
+  row[C.ESTADO]        = op.estado || 'PENDIENTE';
+  row[C.TIER]          = op.tier || 'normal';
+  row[C.OBS]           = op.obs_seguimiento || '';
+  row[C.ASIGNADO_EN]   = op.asignado_en ? new Date(op.asignado_en) : '';
+  row[C.COMPLETADO_EN] = op.completado_en ? new Date(op.completado_en) : '';
+  row[C.CONFIRMADO_POR]= confirmedBy || op.confirmedBy || '';
+  row[C.HORAS_HAB]     = op._horas_habiles || 0;
+  row[C.ID_OP]         = op._id_operacion || '';
+  row[C.NEEDS_REVIEW]  = op._needs_review ? 'TRUE' : 'FALSE';
+  return row;
+}
+
+// ── HANDLE REQUEST ────────────────────────────────────────────
+function handleRequest(params) {
+  var action = params.action;
+
+  // ── ping ──────────────────────────────────────────────────
+  if (action === 'ping') return {ok: true, version: '2.0'};
+
+  // ── getOps: leer todas las ops de una fecha ───────────────
+  if (action === 'getOps') {
+    var date = params.date;
+    var sheet = getOpsSheet();
+    var result = buildUIDMap(sheet);
+    var ops = [];
+    for (var i = 1; i &lt; result.data.length; i++) {
+      var row = result.data[i];
+      if (!row[C.UID]) continue;
+      var rowDate = row[C.FECHA] instanceof Date
+        ? Utilities.formatDate(row[C.FECHA],'UTC','yyyy-MM-dd')
+        : (row[C.FECHA]||'').toString().slice(0,10);
+      if (rowDate === date) ops.push(rowToOp(row));
+    }
+    return {ops: ops, total: ops.length};
+  }
+
+  // ── setOps: confirmar reparto (batch upsert) ──────────────
+  if (action === 'setOps') {
+    var sheet = getOpsSheet();
+    var res = buildUIDMap(sheet);
+    var ops = params.ops || [];
+    var date = params.date;
+    var confirmedBy = params.confirmedBy || '';
+    var newRows = [];
+    var updated = 0;
+
+    for (var j = 0; j &lt; ops.length; j++) {
+      var op = ops[j];
+      var rowArr = opToRow(op, date, confirmedBy);
+      if (res.map[op.uid]) {
+        // Actualizar fila existente — NUNCA revertir HECHO a PENDIENTE
+        var existing = res.map[op.uid].data;
+        if (existing[C.ESTADO] === 'HECHO' &amp;&amp; rowArr[C.ESTADO] === 'PENDIENTE') {
+          rowArr[C.ESTADO] = 'HECHO';
+          rowArr[C.COMPLETADO_EN] = existing[C.COMPLETADO_EN];
+        }
+        sheet.getRange(res.map[op.uid].row, 1, 1, NCOLS).setValues([rowArr]);
+        updated++;
+      } else {
+        newRows.push(rowArr);
+      }
+    }
+    // Batch insert filas nuevas en una sola operación
+    if (newRows.length &gt; 0) {
+      sheet.getRange(res.total+1, 1, newRows.length, NCOLS).setValues(newRows);
+      res.total += newRows.length;
+    }
+    return {success: true, inserted: newRows.length, updated: updated};
+  }
+
+  // ── markEstado: marcar 1 op HECHO/PENDIENTE (ultra rápido) ─
+  if (action === 'markEstado') {
+    var sheet = getOpsSheet();
+    var res = buildUIDMap(sheet);
+    var uid = params.uid;
+    if (!res.map[uid]) return {error: 'UID no encontrado: ' + uid};
+    var rowNum = res.map[uid].row;
+    sheet.getRange(rowNum, C.ESTADO+1).setValue(params.estado || 'PENDIENTE');
+    sheet.getRange(rowNum, C.COMPLETADO_EN+1).setValue(
+      params.completado_en ? new Date(params.completado_en) : ''
+    );
+    return {success: true};
+  }
+
+  // ── updateField: actualizar 1 campo de 1 op ───────────────
+  if (action === 'updateField') {
+    var sheet = getOpsSheet();
+    var res = buildUIDMap(sheet);
+    if (!res.map[params.uid]) return {error: 'UID no encontrado'};
+    var colMap = {
+      'identificador': C.IDENTIFICADOR,
+      'analista': C.ANALISTA,
+      'obs_seguimiento': C.OBS,
+      'estado': C.ESTADO,
+      'tier': C.TIER
+    };
+    var col = colMap[params.field];
+    if (col === undefined) return {error: 'Campo desconocido: ' + params.field};
+    sheet.getRange(res.map[params.uid].row, col+1).setValue(params.value || '');
+    return {success: true};
+  }
+
+  // ── getMHEPendientes: leer SÁBANA_MAESTRA (sin cambios) ───
+  if (action === 'getMHEPendientes') {
+    try {
+      var masterSS = SpreadsheetApp.openById(SHEET_MHE_ID);
+      var masterSheet = masterSS.getSheetByName(SHEET_MHE_NAME_1) || masterSS.getSheetByName(SHEET_MHE_NAME_2);
+      if (!masterSheet) return {error: 'No se encontro la pestana SABANA_MAESTRA'};
+      var mData = masterSheet.getDataRange().getValues();
+      var headers = mData[0];
+      var colIdx = {};
+      headers.forEach(function(h, i){ colIdx[h] = i; });
+      var required = ['ID_Operacion','RUT_Titular','Segmento_SLA','Resolucion_Riesgo','Horas_Habiles','Fecha_Envio','Analista_Riesgo'];
+      for (var r = 0; r &lt; required.length; r++) {
+        if (colIdx[required[r]] === undefined) return {error: 'Columna no encontrada: ' + required[r]};
+      }
+      var productos = ['Primera Vivienda', 'Subsidio'];
+      var ops = [];
+      for (var i = 1; i &lt; mData.length; i++) {
+        var row = mData[i];
+        var resolucion = (row[colIdx['Resolucion_Riesgo']] || '').toString().trim();
+        var segmento = (row[colIdx['Segmento_SLA']] || '').toString().trim();
+        if (resolucion !== 'Pendiente') continue;
+        if (productos.indexOf(segmento) === -1) continue;
+        var horas = parseFloat(row[colIdx['Horas_Habiles']]) || 0;
+        var tier = horas &gt;= 48 ? 'vencido' : (horas &gt;= 36 ? 'urgente' : 'normal');
+        ops.push({
+          id_operacion:   (row[colIdx['ID_Operacion']] || '').toString(),
+          rut:            (row[colIdx['RUT_Titular']] || '').toString(),
+          segmento:       segmento,
+          horas_habiles:  horas,
+          tier:           tier,
+          fecha_envio:    (row[colIdx['Fecha_Envio']] || '').toString(),
+          analista_actual:(row[colIdx['Analista_Riesgo']] || '').toString()
+        });
+      }
+      var tierOrder = {vencido:0, urgente:1, normal:2};
+      ops.sort(function(a,b){ return tierOrder[a.tier] - tierOrder[b.tier]; });
+      return {ops: ops, total: ops.length};
+    } catch(err) {
+      return {error: err.toString()};
+    }
+  }
+
+  // ── config:team (compatibilidad con v1) ───────────────────
   if (action === 'set') {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName('GestionOps') || ss.insertSheet('GestionOps');
+    if (sheet.getLastRow() === 0) sheet.appendRow(['Clave','Datos','Actualizado']);
+    var data = sheet.getDataRange().getValues();
     for (var i = 1; i &lt; data.length; i++) {
       if (data[i][0] === params.key) {
         sheet.getRange(i+1,2).setValue(params.value);
@@ -493,123 +704,31 @@ function handleRequest(params) {
     return {success:true};
   }
   if (action === 'get') {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName('GestionOps');
+    if (!sheet) return {key:params.key, value:null};
+    var data = sheet.getDataRange().getValues();
     for (var j = 1; j &lt; data.length; j++) {
       if (data[j][0] === params.key) return {key:params.key, value:data[j][1]};
     }
     return {key:params.key, value:null};
   }
   if (action === 'list') {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName('GestionOps');
+    if (!sheet) return {keys:[]};
     var prefix = params.prefix || '';
+    var data = sheet.getDataRange().getValues();
     var keys = [];
     for (var k = 1; k &lt; data.length; k++) {
-      if (data[k][0] && data[k][0].toString().startsWith(prefix)) keys.push(data[k][0].toString());
+      if (data[k][0] &amp;&amp; data[k][0].toString().startsWith(prefix)) keys.push(data[k][0].toString());
     }
     return {keys:keys};
   }
-  if (action === 'ping') return {ok:true};
 
-  // ── Leer operaciones pendientes MHE desde SABANA_MAESTRA ──────────────────
-  if (action === 'getMHEPendientes') {
-    try {
-      var masterSS = SpreadsheetApp.openById('10GQdpwjUMCQqEGGDCalWJV5FAupzJSyW8dULY9JDWbc');
-      var masterSheet = masterSS.getSheetByName('SABANA_MAESTRA');
-      if (!masterSheet) masterSheet = masterSS.getSheetByName('S\u00c1BANA_MAESTRA');
-      if (!masterSheet) return {error: 'No se encontro la pestana SABANA_MAESTRA'};
-      var data = masterSheet.getDataRange().getValues();
-      var headers = data[0];
-      // Mapear columnas
-      var colIdx = {};
-      headers.forEach(function(h, i){ colIdx[h] = i; });
-      var required = ['ID_Operacion','RUT_Titular','Segmento_SLA','Resolucion_Riesgo','Horas_Habiles','Fecha_Envio','Analista_Riesgo'];
-      for (var r = 0; r < required.length; r++) {
-        if (colIdx[required[r]] === undefined) return {error: 'Columna no encontrada: ' + required[r]};
-      }
-      var productos = ['Primera Vivienda', 'Subsidio'];
-      var ops = [];
-      for (var i = 1; i < data.length; i++) {
-        var row = data[i];
-        var resolucion = (row[colIdx['Resolucion_Riesgo']] || '').toString().trim();
-        var segmento = (row[colIdx['Segmento_SLA']] || '').toString().trim();
-        if (resolucion !== 'Pendiente') continue;
-        if (productos.indexOf(segmento) === -1) continue;
-        var horasHabiles = parseFloat(row[colIdx['Horas_Habiles']]) || 0;
-        var tier = horasHabiles >= 48 ? 'vencido' : (horasHabiles >= 36 ? 'urgente' : 'normal');
-        ops.push({
-          id_operacion: (row[colIdx['ID_Operacion']] || '').toString(),
-          rut: (row[colIdx['RUT_Titular']] || '').toString(),
-          segmento: segmento,
-          horas_habiles: horasHabiles,
-          tier: tier,
-          fecha_envio: (row[colIdx['Fecha_Envio']] || '').toString(),
-          analista_actual: (row[colIdx['Analista_Riesgo']] || '').toString()
-        });
-      }
-      // Ordenar: vencidos primero, luego urgentes, luego normales
-      var tierOrder = {vencido:0, urgente:1, normal:2};
-      ops.sort(function(a,b){ return tierOrder[a.tier] - tierOrder[b.tier]; });
-      return {ops: ops, total: ops.length};
-    } catch(err) {
-      return {error: err.toString()};
-    }
-  }
-
-  // ── Hoja de registro histórico (legible, por fila) ─────────────────────────
-  if (action === 'logRows') {
-    var COLS = ['Fecha','Analista','Producto','Tipo ID','Identificador',
-                'Estado','Urgencia','Observación','Hora Asignación',
-                'Hora Completado','Confirmado por','ID Operación'];
-    var log = ss.getSheetByName('RegistroHistorico');
-    if (!log) {
-      log = ss.insertSheet('RegistroHistorico');
-      log.appendRow(COLS);
-      log.setFrozenRows(1);
-      var hdr = log.getRange(1,1,1,COLS.length);
-      hdr.setBackground('#002960');
-      hdr.setFontColor('#FFFFFF');
-      hdr.setFontWeight('bold');
-    }
-      var logData = log.getDataRange().getValues();
-      var uidCol = 11; // columna L (índice 0 = col A)
-      var rows = params.rows;
-      for (var r = 0; r < rows.length; r++) {
-        var op = rows[r];
-        // Usar objetos Date reales para que Sheets permita filtrar por fecha
-        var fechaAsignado = op.asignado_en ? new Date(op.asignado_en) : '';
-        var fechaCompletado = op.completado_en ? new Date(op.completado_en) : '';
-        var fechaDia = op.date ? new Date(op.date) : '';
-        var rowArr = [
-          fechaDia,
-          op.analista    || '',
-          op.productName || '',
-          op.idType      || '',
-          op.identificador || '(pendiente)',
-          op.estado      || 'PENDIENTE',
-          op.tier        || 'normal',
-          op.obs_seguimiento || '',
-          fechaAsignado,
-          fechaCompletado,
-          op.confirmedBy || '',
-          op.uid         || ''
-        ];
-      var found = false;
-      for (var m = 1; m &lt; logData.length; m++) {
-        if (logData[m][uidCol] === op.uid) {
-          log.getRange(m+1, 1, 1, COLS.length).setValues([rowArr]);
-          logData[m] = rowArr;
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        log.appendRow(rowArr);
-        logData.push(rowArr);
-      }
-    }
-    return {success:true, rows:rows.length};
-  }
-
-  return {error:'Acción no reconocida: ' + action};
-}</pre>
+  return {error: 'Acción no reconocida: ' + action};
+}
+</pre>
           </div>
           <b style="color:var(--ink);">4. Publica como aplicación web</b><br>
           Haz clic en <i>Implementar</i> → <i>Nueva implementación</i> → tipo: <i>Aplicación web</i><br>
@@ -838,12 +957,20 @@ async function gsCall(action, params){
   const payload = JSON.stringify({action, ...params});
   const r = await fetch(GS_CONFIG.scriptUrl, {method:'POST', body:payload});
   if(!r.ok) throw new Error('Error HTTP '+r.status+'. Verifica que el script esté publicado.');
-  return r.json();
+  const text = await r.text();
+  try{ return JSON.parse(text); }
+  catch(e){ throw new Error('Respuesta inválida del script. Verifica que esté publicado correctamente.'); }
 }
 
 async function gsSet(key, value){ await gsCall('set',{key,value}); return {key,value}; }
 async function gsGet(key){ const d = await gsCall('get',{key}); return d.value?{key,value:d.value}:null; }
 async function gsList(prefix){ const d = await gsCall('list',{prefix:prefix||''}); return {keys:d.keys||[]}; }
+
+// ── v2.0: métodos por operación ──────────────────────────────
+async function gsGetOps(date){ return gsCall('getOps',{date}); }
+async function gsSetOps(date,ops,confirmedBy){ return gsCall('setOps',{date,ops,confirmedBy}); }
+async function gsMarkEstado(uid,estado,completado_en){ return gsCall('markEstado',{uid,estado,completado_en}); }
+async function gsUpdateField(uid,field,value){ return gsCall('updateField',{uid,field,value}); }
 
 async function gsLogRows(ops, confirmedBy, date){
   if(getStoreMode()!=='gs') return; // solo en modo Google Sheets
@@ -948,7 +1075,12 @@ var store = {
       if(k&&k.startsWith('gestion:'+(prefix||''))) keys.push(k.replace('gestion:',''));
     }
     return {keys};
-  }
+  },
+  // v2.0: operaciones individuales (sin race conditions)
+  async getOps(date){ try{ return await gsGetOps(date); }catch(e){ console.error('GS getOps:',e); return {ops:[]}; } },
+  async setOps(date,ops,confirmedBy){ try{ return await gsSetOps(date,ops,confirmedBy); }catch(e){ console.error('GS setOps:',e); return {success:false}; } },
+  async markEstado(uid,estado,ts){ try{ return await gsMarkEstado(uid,estado,ts); }catch(e){ console.error('GS markEstado:',e); } },
+  async updateField(uid,field,value){ try{ return await gsUpdateField(uid,field,value); }catch(e){ console.error('GS updateField:',e); } }
 };
 
 function showStorageBanner(){ updateConnBadge(); }
@@ -961,6 +1093,7 @@ var dayOps = [];
 var planDistribution = {};
 var seguimientoOps = [];
 var availability = {}; // { analystName: true/false (true = available) }
+var planVols = {}; // { productKey: { total, urgent } } — fuente de verdad de planificación
 
 // ─── UTILS ─────────────────────────────────────────────────────────────────
 function todayISO(){
@@ -1132,7 +1265,7 @@ function goTo(tab){
   document.querySelectorAll('.nav-tab')[tabs[tab]].classList.add('active');
   if(tab==='seguimiento') loadSeguimiento();
   if(tab==='historial') loadHistorial();
-  if(tab==='ops'){ loadOpsForToday().then(()=>{ buildOpsEntry(); updateConfirmDateLabel(); updateDraftBadge(); }); }
+  if(tab==='ops'){ ensureTeamReady().then(()=>loadOpsForToday()).then(()=>{ buildOpsEntry(); updateConfirmDateLabel(); updateDraftBadge(); }); }
   if(tab==='miturno') loadMiTurno();
   if(tab==='equipo') renderEquipo();
 }
@@ -1197,19 +1330,26 @@ function setDayType(t){
   document.getElementById('btn-lj').classList.toggle('active', t==='LJ');
   document.getElementById('btn-v').classList.toggle('active', t==='V');
   const fdsBtn=document.getElementById('btn-fds'); if(fdsBtn) fdsBtn.classList.toggle('active', t==='FDS');
-  savePlanConfig();
+  savePlanVolsFromMemory();
   recalcPlan();
 }
 
 function savePlanConfig(){
   try{
-    const vols={};
+    // Leer DOM solo si los elementos existen, sino usar planVols en memoria
     PRODUCTS.forEach(p=>{
       const tv=document.getElementById('vol-'+p.key);
       const tu=document.getElementById('urg-'+p.key);
-      if(tv) vols[p.key]={total:tv.value, urgent:tu?tu.value:0};
+      if(tv){ planVols[p.key]={total:parseInt(tv.value)||0, urgent:parseInt(tu&&tu.value)||0}; }
     });
-    localStorage.setItem('plan:'+currentDate, JSON.stringify({dayType, vols}));
+    localStorage.setItem('plan:'+currentDate, JSON.stringify({dayType, vols:planVols}));
+  }catch(e){}
+}
+
+function savePlanVolsFromMemory(){
+  // Guardar solo desde planVols (sin tocar DOM) — seguro llamar en cualquier momento
+  try{
+    localStorage.setItem('plan:'+currentDate, JSON.stringify({dayType, vols:planVols}));
   }catch(e){}
 }
 
@@ -1220,6 +1360,9 @@ function loadPlanConfig(){
     const cfg=JSON.parse(saved);
     if(cfg.dayType) dayType=cfg.dayType;
     if(cfg.vols){
+      // Guardar en memoria primero
+      planVols = cfg.vols;
+      // Actualizar DOM si los elementos existen
       Object.entries(cfg.vols).forEach(([key,v])=>{
         const tv=document.getElementById('vol-'+key);
         const tu=document.getElementById('urg-'+key);
@@ -1238,9 +1381,9 @@ function buildProdGrid(){
     <div class="prod-card">
       <div class="pname">${p.name}</div>
       <div class="pmeta">SLA ${p.slaH}h · ${p.idType} · líder ${p.leader}</div>
-      <input type="number" min="0" id="vol-${p.key}" value="${p.dflt}" oninput="recalcPlan();savePlanConfig();">
+      <input type="number" min="0" id="vol-${p.key}" value="${planVols[p.key]?planVols[p.key].total:p.dflt}" oninput="planVols[p.key]=planVols[p.key]||{};planVols[p.key].total=parseInt(this.value)||0;recalcPlan();savePlanVolsFromMemory();">
       <div class="urg-label">Vencen hoy</div>
-      <input type="number" min="0" class="urg" id="urg-${p.key}" value="0" oninput="recalcPlan();savePlanConfig();">
+      <input type="number" min="0" class="urg" id="urg-${p.key}" value="${planVols[p.key]?planVols[p.key].urgent:0}" oninput="planVols[p.key]=planVols[p.key]||{};planVols[p.key].urgent=parseInt(this.value)||0;recalcPlan();savePlanVolsFromMemory();">
     </div>
   `).join('');
 }
@@ -1719,6 +1862,11 @@ async function cargarDesdeMaestro(){
     const capMHE = mheAnalistas.reduce((sum)=>sum + (CAPS[dayType]||21), 0);
     const opsYaCargadasMHE = dayOps.filter(o=>o.productKey==='pv'||o.productKey==='subsidio').length;
     const capacidadRestante = Math.max(0, capMHE - opsYaCargadasMHE);
+    if(capacidadRestante === 0){
+      statusEl.innerHTML = '<span style="color:var(--amber);font-weight:600;">⚠ Capacidad MHE = 0. Activa analistas de PV/Subsidio en Planificación antes de cargar.</span>';
+      btn.disabled=false; btn.textContent='↓ Cargar desde Sheet maestro';
+      return;
+    }
     const genericos = ['producdigitalriesgo','primera iteracion','primera iteración',''];
     const esGenerico = op => genericos.includes((op.analista_actual||'').trim().toLowerCase());
 
@@ -1807,7 +1955,13 @@ async function cargarDesdeMaestro(){
         // → NO están en el mapa → auto-asignan por algoritmo
       };
       const analista_maestro = (op.analista_actual||'').trim().toLowerCase();
-      const analistaResuelto = NOMBRE_MAP[analista_maestro] || null;
+      // Búsqueda exacta primero, luego búsqueda parcial por apellido/nombre
+      let analistaResuelto = NOMBRE_MAP[analista_maestro] || null;
+      if(!analistaResuelto && analista_maestro){
+        // Buscar si algún miembro del equipo tiene ese nombre de usuario como parte de su nombre
+        const teamMatch = TEAM.find(t=> analista_maestro.includes(t.name.toLowerCase()) || t.name.toLowerCase().includes(analista_maestro));
+        if(teamMatch) analistaResuelto = teamMatch.name;
+      }
       // Usar analista del maestro si es del equipo, sino auto-asignar
       const analistaFinal = analistaResuelto || autoAssign(productKey);
       const genericos = ['producdigitalriesgo','primera iteracion','primera iteración',''];
@@ -1855,7 +2009,16 @@ async function cargarDesdeMaestro(){
   btn.textContent = '↓ Cargar desde Sheet maestro';
 }
 
+var _teamReady = false;
+async function ensureTeamReady(){
+  if(_teamReady) return;
+  await loadTeamFromGS();
+  _teamReady = true;
+}
+
 async function loadOpsForToday(){
+  // Asegurar que el equipo esté cargado antes de operar
+  await ensureTeamReady();
   // Si ya hay operaciones cargadas, no hacer nada
   if(dayOps.length > 0) return;
   // Intentar cargar desde borrador local primero
@@ -1906,21 +2069,30 @@ async function confirmDay(){
   statusEl.textContent='Guardando...';
   try{
     const vols=getVolumes();
-    // Leer estado FRESCO de GS para preservar HECHO del equipo antes de reconfirmar
+    // Preservar HECHO: usar seguimientoOps local primero (más confiable que GS en red lenta)
+    // También intentar GS para capturar cambios de otros analistas
+    const hechodMap = {};
+    // 1. Primero tomar HECHO del estado local en memoria
+    if(seguimientoOps && seguimientoOps.length){
+      seguimientoOps.forEach(o=>{ if(o.estado==='HECHO') hechodMap[o.uid]=o; });
+    }
+    // 2. Complementar con backup local
+    const localBk = loadLocalBackup();
+    if(localBk){ localBk.forEach(o=>{ if(o.estado==='HECHO') hechodMap[o.uid]=o; }); }
+    // 3. Intentar GS (si falla, ya tenemos local como respaldo)
     try{
       const freshR = await store.get('ops:'+currentDate);
-      const freshOps = freshR&&freshR.value ? JSON.parse(freshR.value) : (seguimientoOps||[]);
-      const freshMap = {};
-      freshOps.forEach(o=>{ freshMap[o.uid]=o; });
-      dayOps.forEach(op=>{
-        const fresh = freshMap[op.uid];
-        if(fresh){
-          if(fresh.estado==='HECHO'){ op.estado='HECHO'; op.completado_en=fresh.completado_en; }
-          if(fresh.obs_seguimiento) op.obs_seguimiento=fresh.obs_seguimiento;
-        }
-      });
-    } catch(e){ console.error('No se pudo leer GS antes de confirmar:', e); }
-    await store.set('ops:'+currentDate, JSON.stringify(dayOps));
+      if(freshR&&freshR.value){
+        JSON.parse(freshR.value).forEach(o=>{ if(o.estado==='HECHO') hechodMap[o.uid]=o; });
+      }
+    } catch(e){ console.warn('GS read antes de confirmar falló, usando estado local'); }
+    // Aplicar todos los HECHO encontrados a dayOps
+    dayOps.forEach(op=>{
+      const h = hechodMap[op.uid];
+      if(h){ op.estado='HECHO'; op.completado_en=h.completado_en; op.obs_seguimiento=h.obs_seguimiento||op.obs_seguimiento; }
+    });
+    // v2.0: usar setOps (1 fila por op, sin race conditions)
+    await store.setOps(currentDate, dayOps, currentUser||'--');
     await store.set('meta:'+currentDate, JSON.stringify({
       date:currentDate, dayType, volumes:vols, distribution:planDistribution,
       confirmedAt:new Date().toISOString(), confirmedBy:currentUser||'--',
@@ -1929,13 +2101,15 @@ async function confirmDay(){
     statusEl.textContent='✓ Reparto guardado el '+new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'})+'. Accesible para todo el equipo.';
     statusEl.style.color='var(--teal)';
     // No limpiar borrador -- las ops siguen visibles en Operaciones hasta nueva fecha o limpieza manual
-    gsLogRows(dayOps, currentUser, currentDate);
+    // gsLogRows en segundo plano — no bloquea la confirmación
+    setTimeout(()=>gsLogRows(dayOps, currentUser, currentDate), 500);
   } catch(e){
     statusEl.textContent='Error al guardar. Reintentando en 3 segundos...';
     statusEl.style.color='var(--amber)';
     setTimeout(async()=>{
       try{
-        await store.set('ops:'+currentDate, JSON.stringify(dayOps));
+        // v2.0: usar setOps (1 fila por op, sin race conditions)
+    await store.setOps(currentDate, dayOps, currentUser||'--');
         statusEl.textContent='✓ Reparto guardado (reintento exitoso) '+new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});
         statusEl.style.color='var(--teal)';
         gsLogRows(dayOps, currentUser, currentDate);
@@ -1988,8 +2162,9 @@ async function loadSeguimiento(){
   document.getElementById('seg-empty').innerHTML='';
   const backup = loadLocalBackup();
   try{
-    const r=await store.get('ops:'+currentDate);
-    const gsOps = r&&r.value?JSON.parse(r.value):[];
+    // v2.0: getOps (filas individuales, sin JSON blob)
+    const r=await store.getOps(currentDate);
+    const gsOps = r&&r.ops ? r.ops : [];
     // Merge GS data con backup local para no perder estados HECHO pendientes de sync
     seguimientoOps = mergeOps(gsOps, backup);
     // Actualizar backup con el merge resultante
@@ -2132,20 +2307,13 @@ async function toggleEstado(uid){
   dayOps=seguimientoOps.map(o=>({...o}));
   saveLocalBackup(seguimientoOps);
   renderSeguimiento();
-  // Leer estado fresco de GS antes de guardar para evitar sobrescribir cambios de otros analistas
-  store.get('ops:'+currentDate).then(r=>{
-    const gsOps = r&&r.value ? JSON.parse(r.value) : [];
-    // Fusionar: aplicar cambio local sobre estado fresco de GS
-    const merged = gsOps.length ? gsOps.map(o=>{
-      if(o.uid===op.uid) return {...o, estado:op.estado, completado_en:op.completado_en};
-      // Preservar HECHO de GS que no tengamos en local
-      const local = seguimientoOps.find(s=>s.uid===o.uid);
-      if(local && local.estado==='HECHO') return {...o, estado:'HECHO', completado_en:local.completado_en, obs_seguimiento:local.obs_seguimiento||o.obs_seguimiento};
-      return o;
-    }) : seguimientoOps;
-    return store.set('ops:'+currentDate, JSON.stringify(merged));
-  }).then(()=>{ gsLogRows([op], op.analista||currentUser, currentDate); })
-    .catch(e=>{ console.error('Error guardando en GS:', e); });
+  // Guardar en GS en segundo plano con manejo robusto
+  // v2.0: markEstado actualiza solo 1 celda — ultra rápido, sin race condition
+  (async()=>{
+    try{
+      await store.markEstado(op.uid, op.estado, op.completado_en||null);
+    } catch(e){ console.error('Error guardando estado en GS (preservado localmente):', e); }
+  })();
 }
 
 // ─── HISTORIAL PAGE ──────────────────────────────────────────────────────────
@@ -2219,8 +2387,8 @@ async function loadMiTurno(){
 
   const backup = loadLocalBackup();
   try{
-    const r = await store.get('ops:'+currentDate);
-    const gsOps = r&&r.value ? JSON.parse(r.value) : [];
+    const r = await store.getOps(currentDate);
+    const gsOps = r&&r.ops ? r.ops : [];
     // Merge con backup local -- nunca pierde HECHO aunque GS tenga PENDIENTE
     seguimientoOps = mergeOps(gsOps, backup || seguimientoOps);
     saveLocalBackup(seguimientoOps);
@@ -2298,7 +2466,7 @@ async function toggleEstadoMiTurno(uid){
   loadMiTurno();
   // Guardar en GS en segundo plano
   store.set('ops:'+currentDate, JSON.stringify(seguimientoOps))
-    .then(()=>{ gsLogRows([op], op.analista||currentUser, currentDate); })
+    .then(()=>{ setTimeout(()=>gsLogRows([op], op.analista||currentUser, currentDate), 200); })
     .catch(e=>{ console.error('Error guardando en GS (preservado localmente):', e); });
 }
 
@@ -2424,36 +2592,61 @@ function applyTeam(saved){
 }
 
 async function loadTeamFromGS(){
-  // 1. Intentar desde GS
+  // PRIORIDAD 1: localStorage (inmediato, confiable, refleja últimos cambios del usuario)
+  try{
+    const local = localStorage.getItem('team:backup');
+    if(local){
+      const parsed = JSON.parse(local);
+      if(applyTeam(parsed)){
+        // En paralelo, sincronizar desde GS solo si GS tiene una versión más reciente
+        syncTeamFromGS(parsed);
+        return;
+      }
+    }
+  } catch(e){}
+  // PRIORIDAD 2: GS (si no hay backup local — primera vez o navegador limpio)
   try{
     const r = await store.get('config:team');
     if(r && r.value){
       const saved = JSON.parse(r.value);
       if(applyTeam(saved)){
-        localStorage.setItem('team:backup', JSON.stringify(saved)); // backup local
+        localStorage.setItem('team:backup', JSON.stringify(saved));
         return;
       }
     }
-  } catch(e){ console.log('GS no disponible, intentando backup local'); }
-  // 2. Fallback a localStorage si GS falla
+  } catch(e){ console.log('GS no disponible'); }
+  // PRIORIDAD 3: Default hardcoded (solo si no hay nada guardado en ningún lado)
+  console.log('Usando equipo por defecto — no se encontró configuración guardada');
+}
+
+async function syncTeamFromGS(localTeam){
+  // Compara GS con local: si GS tiene más analistas, usa GS (otro dispositivo puede haber guardado)
   try{
-    const local = localStorage.getItem('team:backup');
-    if(local){ applyTeam(JSON.parse(local)); return; }
+    const r = await store.get('config:team');
+    if(r && r.value){
+      const gsTeam = JSON.parse(r.value);
+      // Usar GS solo si tiene más analistas que local (indica que fue guardado desde otro dispositivo)
+      // NUNCA usar GS si tiene MENOS analistas (protege contra sobrescrituras)
+      if(gsTeam.length > localTeam.length){
+        applyTeam(gsTeam);
+        localStorage.setItem('team:backup', JSON.stringify(gsTeam));
+        renderEquipo(); initUserSelect(); recalcPlan();
+      }
+    }
   } catch(e){}
-  // 3. Default hardcoded (último recurso)
-  console.log('Usando equipo por defecto');
 }
 
 async function saveTeamToGS(){
+  const teamJson = JSON.stringify(TEAM);
+  // SIEMPRE guardar en localStorage PRIMERO (síncrono, nunca falla)
+  localStorage.setItem('team:backup', teamJson);
+  // Intentar GS en segundo plano
   try{
-    const teamJson = JSON.stringify(TEAM);
-    localStorage.setItem('team:backup', teamJson); // siempre guardar local también
     await store.set('config:team', teamJson);
     return true;
   } catch(e){
-    localStorage.setItem('team:backup', JSON.stringify(TEAM)); // al menos local
-    console.error('Error guardando equipo en GS:', e);
-    return false;
+    console.warn('Equipo guardado solo localmente (GS no disponible):', e);
+    return false; // local ya está guardado arriba
   }
 }
 
@@ -2530,13 +2723,13 @@ async function saveAnalista(){
   TEAM.filter(t=>!t.products.includes('brasil')).forEach(t=>CHILE_ANALYSTS.push(t.name));
   statusEl.textContent = 'Guardando...';
   const ok = await saveTeamToGS();
-  statusEl.textContent = ok ? '✓ Guardado' : '✗ Error al guardar';
-  statusEl.style.color = ok ? 'var(--teal)' : 'var(--red)';
+  statusEl.textContent = ok ? '✓ Guardado en GS y localmente' : '✓ Guardado localmente (sin conexion a GS)';
+  statusEl.style.color = 'var(--teal)';
   renderEquipo();
-  initUserSelect(); // actualizar selector de usuario
-  initAvailability(); // actualizar chips de disponibilidad
-  recalcPlan(); // actualizar distribución en Planificación
-  setTimeout(closeEquipoModal, 800);
+  initUserSelect();
+  initAvailability();
+  recalcPlan();
+  setTimeout(closeEquipoModal, 1200);
 }
 
 async function removeAnalista(nombre){
@@ -2546,11 +2739,16 @@ async function removeAnalista(nombre){
   delete availability[nombre];
   CHILE_ANALYSTS.length = 0;
   TEAM.filter(t=>!t.products.includes('brasil')).forEach(t=>CHILE_ANALYSTS.push(t.name));
-  await saveTeamToGS();
+  const ok = await saveTeamToGS();
   renderEquipo();
   initUserSelect();
   initAvailability();
   recalcPlan();
+  const equipoStatus = document.getElementById('equipo-status');
+  if(equipoStatus){
+    equipoStatus.innerHTML = '<div style="font-size:12px;color:var(--teal);margin-bottom:8px;">✓ '+nombre+' eliminado y cambios guardados.\</div>';
+    setTimeout(()=>{ if(equipoStatus) equipoStatus.innerHTML=''; }, 3000);
+  }
 }
 
 // ─── INIT ───────────────────────────────────────────────────────────────────
@@ -2593,7 +2791,7 @@ if(loadDraft()){
 var _lastRefresh = Date.now();
 var _midnightWarningShown = false;
 
-setInterval(async function(){
+window._autoRefreshTimer = setInterval(async function(){
   // Detectar cambio de fecha (medianoche)
   const realToday = todayISO();
   // Solo mostrar aviso de medianoche si la diferencia es de exactamente 1 día (evita falsos positivos)
@@ -2616,10 +2814,15 @@ setInterval(async function(){
   const segActive = document.getElementById('page-seguimiento').classList.contains('active');
   const miTurnoActive = document.getElementById('page-miturno').classList.contains('active');
   if(!segActive && !miTurnoActive) return;
-  // Seguimiento: siempre refrescar — el Jefe necesita ver cambios en tiempo real
-  // Mi turno: respetar pausa si el analista está trabajando activamente
-  if(segActive) await silentRefreshSeguimiento();
-  if(miTurnoActive && Date.now() - _lastRefresh > 15000) await loadMiTurno();
+  // P10: Evitar llamadas concurrentes si la anterior no terminó
+  if(window._refreshInProgress) return;
+  window._refreshInProgress = true;
+  try{
+    if(segActive) await silentRefreshSeguimiento();
+    if(miTurnoActive && Date.now() - _lastRefresh > 15000) await loadMiTurno();
+  } finally {
+    window._refreshInProgress = false;
+  }
 }, 30000); // 30 segundos
 
 // Registrar actividad del usuario para no interrumpir mientras trabaja
@@ -2628,8 +2831,8 @@ setInterval(async function(){
 async function silentRefreshSeguimiento(){
   const backup = loadLocalBackup();
   try{
-    const r = await store.get('ops:'+currentDate);
-    const gsOps = r&&r.value ? JSON.parse(r.value) : [];
+    const r = await store.getOps(currentDate);
+    const gsOps = r&&r.ops ? r.ops : [];
     if(gsOps.length < seguimientoOps.length) return;
     const merged = mergeOps(gsOps, backup || seguimientoOps);
     const changed = JSON.stringify(merged) !== JSON.stringify(seguimientoOps);
