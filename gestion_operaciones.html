@@ -1931,8 +1931,19 @@ async function confirmDay(){
     // No limpiar borrador -- las ops siguen visibles en Operaciones hasta nueva fecha o limpieza manual
     gsLogRows(dayOps, currentUser, currentDate);
   } catch(e){
-    statusEl.textContent='Error al guardar: '+e.message;
-    statusEl.style.color='var(--red)';
+    statusEl.textContent='Error al guardar. Reintentando en 3 segundos...';
+    statusEl.style.color='var(--amber)';
+    setTimeout(async()=>{
+      try{
+        await store.set('ops:'+currentDate, JSON.stringify(dayOps));
+        statusEl.textContent='✓ Reparto guardado (reintento exitoso) '+new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});
+        statusEl.style.color='var(--teal)';
+        gsLogRows(dayOps, currentUser, currentDate);
+      } catch(e2){
+        statusEl.textContent='✗ Error: '+e2.message+'. Verifica conexión e intenta de nuevo.';
+        statusEl.style.color='var(--red)';
+      }
+    }, 3000);
   }
 }
 
@@ -2403,27 +2414,47 @@ function generarResumenCierre(){
 // ─── GESTIÓN DE EQUIPO ──────────────────────────────────────────────────────
 var _editingAnalista = null; // nombre del analista que se está editando
 
+function applyTeam(saved){
+  if(!Array.isArray(saved) || !saved.length) return false;
+  TEAM.length = 0;
+  saved.forEach(t=>TEAM.push(t));
+  CHILE_ANALYSTS.length = 0;
+  TEAM.filter(t=>!t.products.includes('brasil')).forEach(t=>CHILE_ANALYSTS.push(t.name));
+  return true;
+}
+
 async function loadTeamFromGS(){
+  // 1. Intentar desde GS
   try{
     const r = await store.get('config:team');
     if(r && r.value){
       const saved = JSON.parse(r.value);
-      if(Array.isArray(saved) && saved.length > 0){
-        // Merge: mantener analistas del código que no estén en GS, agregar los de GS
-        TEAM.length = 0;
-        saved.forEach(t=>TEAM.push(t));
-        CHILE_ANALYSTS.length = 0;
-        TEAM.filter(t=>!t.products.includes('brasil')).forEach(t=>CHILE_ANALYSTS.push(t.name));
+      if(applyTeam(saved)){
+        localStorage.setItem('team:backup', JSON.stringify(saved)); // backup local
+        return;
       }
     }
-  } catch(e){ console.log('Usando equipo por defecto'); }
+  } catch(e){ console.log('GS no disponible, intentando backup local'); }
+  // 2. Fallback a localStorage si GS falla
+  try{
+    const local = localStorage.getItem('team:backup');
+    if(local){ applyTeam(JSON.parse(local)); return; }
+  } catch(e){}
+  // 3. Default hardcoded (último recurso)
+  console.log('Usando equipo por defecto');
 }
 
 async function saveTeamToGS(){
   try{
-    await store.set('config:team', JSON.stringify(TEAM));
+    const teamJson = JSON.stringify(TEAM);
+    localStorage.setItem('team:backup', teamJson); // siempre guardar local también
+    await store.set('config:team', teamJson);
     return true;
-  } catch(e){ console.error('Error guardando equipo:', e); return false; }
+  } catch(e){
+    localStorage.setItem('team:backup', JSON.stringify(TEAM)); // al menos local
+    console.error('Error guardando equipo en GS:', e);
+    return false;
+  }
 }
 
 function renderEquipo(){
@@ -2565,7 +2596,9 @@ var _midnightWarningShown = false;
 setInterval(async function(){
   // Detectar cambio de fecha (medianoche)
   const realToday = todayISO();
-  if(realToday !== currentDate && !_midnightWarningShown){
+  // Solo mostrar aviso de medianoche si la diferencia es de exactamente 1 día (evita falsos positivos)
+  const dayDiff = (new Date(realToday) - new Date(currentDate)) / 86400000;
+  if(dayDiff === 1 && !_midnightWarningShown){
     _midnightWarningShown = true;
     const continuar = window.confirm('Pasaron las 12:00 AM - nuevo dia: ' + realToday + '. Continuar con operaciones del dia anterior ' + currentDate + '?');
     if(!continuar){
@@ -2597,16 +2630,17 @@ async function silentRefreshSeguimiento(){
   try{
     const r = await store.get('ops:'+currentDate);
     const gsOps = r&&r.value ? JSON.parse(r.value) : [];
-    // NUNCA actualizar si GS devuelve menos operaciones que lo que ya hay en pantalla
-    // (protege contra pérdida de datos por demora de red o error)
     if(gsOps.length < seguimientoOps.length) return;
     const merged = mergeOps(gsOps, backup || seguimientoOps);
     const changed = JSON.stringify(merged) !== JSON.stringify(seguimientoOps);
     if(changed){
       seguimientoOps = merged;
       saveLocalBackup(seguimientoOps);
-      populateFilters();
-      renderSeguimiento();
+      // Solo re-renderizar si el usuario no está interactuando (evita "saltos" visuales)
+      if(Date.now() - _lastRefresh > 5000){
+        populateFilters();
+        renderSeguimiento();
+      }
       const badge = document.getElementById('refresh-badge');
       if(badge){ badge.textContent = 'Actualizado ' + new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'}); }
     }
