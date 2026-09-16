@@ -630,7 +630,7 @@ function handleRequest(params) {
     return {ops: ops, total: ops.length};
   }
 
-  // ── setOps: confirmar reparto (batch upsert) ──────────────
+  // ── setOps: confirmar reparto (solo inserta nuevas, no toca existentes) ──
   if (action === 'setOps') {
     var sheet = getOpsSheet();
     var res = buildUIDMap(sheet);
@@ -640,26 +640,25 @@ function handleRequest(params) {
     var newRows = [];
     var updated = 0;
 
-    for (var j = 0; j &lt; ops.length; j++) {
+    for (var j = 0; j < ops.length; j++) {
       var op = ops[j];
-      var rowArr = opToRow(op, date, confirmedBy);
       if (res.map[op.uid]) {
-        // Actualizar fila existente — NUNCA revertir HECHO a PENDIENTE
+        // Ya existe — NO tocar si tiene HECHO, solo actualizar identificador si cambió
         var existing = res.map[op.uid].data;
-        if (existing[C.ESTADO] === 'HECHO' &amp;&amp; rowArr[C.ESTADO] === 'PENDIENTE') {
-          rowArr[C.ESTADO] = 'HECHO';
-          rowArr[C.COMPLETADO_EN] = existing[C.COMPLETADO_EN];
+        var newId = op.identificador || '';
+        if (existing[C.ESTADO] !== 'HECHO' && newId && newId !== existing[C.IDENTIFICADOR]) {
+          sheet.getRange(res.map[op.uid].row, C.IDENTIFICADOR+1).setValue(newId);
         }
-        sheet.getRange(res.map[op.uid].row, 1, 1, NCOLS).setValues([rowArr]);
         updated++;
       } else {
-        newRows.push(rowArr);
+        // Nueva — agregar al batch
+        newRows.push(opToRow(op, date, confirmedBy));
       }
     }
-    // Batch insert filas nuevas en una sola operación
-    if (newRows.length &gt; 0) {
-      sheet.getRange(res.total+1, 1, newRows.length, NCOLS).setValues(newRows);
-      res.total += newRows.length;
+    // Insertar todas las nuevas en una sola operación (no fila por fila)
+    if (newRows.length > 0) {
+      var lastRow = sheet.getLastRow();
+      sheet.getRange(lastRow+1, 1, newRows.length, NCOLS).setValues(newRows);
     }
     return {success: true, inserted: newRows.length, updated: updated};
   }
@@ -799,6 +798,82 @@ function handleRequest(params) {
       if (data[k][0] &amp;&amp; data[k][0].toString().startsWith(prefix)) keys.push(data[k][0].toString());
     }
     return {keys:keys};
+  }
+
+  // ── setMeta: guardar planificación del día ───────────────
+  if (action === 'setMeta') {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var metaSheet = ss.getSheetByName('PlanificacionMeta');
+    if (!metaSheet) {
+      metaSheet = ss.insertSheet('PlanificacionMeta');
+      metaSheet.appendRow(['Fecha','DayType','TotalOps','ConfirmadoPor','ConfirmadoEn',
+        'Vol_Leasing','Vol_Pie','Vol_PV','Vol_Subsidio','Vol_Brasil','Distribucion']);
+      metaSheet.getRange(1,1,1,11).setBackground('#002960').setFontColor('#FFFFFF').setFontWeight('bold');
+      metaSheet.setFrozenRows(1);
+    }
+    var meta = params.meta;
+    var vols = meta.volumes || {};
+    var rowArr = [
+      new Date(meta.date),
+      meta.dayType || '',
+      meta.totalOps || 0,
+      meta.confirmedBy || '',
+      meta.confirmedAt ? new Date(meta.confirmedAt) : '',
+      (vols.leasing && vols.leasing.total) || 0,
+      (vols.pie && vols.pie.total) || 0,
+      (vols.pv && vols.pv.total) || 0,
+      (vols.subsidio && vols.subsidio.total) || 0,
+      (vols.brasil && vols.brasil.total) || 0,
+      JSON.stringify(meta.distribution || {})
+    ];
+    // Buscar si ya existe fila para esta fecha y actualizar
+    var metaData = metaSheet.getDataRange().getValues();
+    var dateStr = params.date;
+    var found = false;
+    for (var mi = 1; mi < metaData.length; mi++) {
+      var rowDate = metaData[mi][0] instanceof Date
+        ? Utilities.formatDate(metaData[mi][0],'UTC','yyyy-MM-dd')
+        : (metaData[mi][0]||'').toString().slice(0,10);
+      if (rowDate === dateStr) {
+        metaSheet.getRange(mi+1, 1, 1, rowArr.length).setValues([rowArr]);
+        found = true;
+        break;
+      }
+    }
+    if (!found) metaSheet.appendRow(rowArr);
+    return {success: true};
+  }
+
+  // ── getMeta: obtener planificación de un día ──────────────
+  if (action === 'getMeta') {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var metaSheet = ss.getSheetByName('PlanificacionMeta');
+    if (!metaSheet) return {meta: null};
+    var metaData = metaSheet.getDataRange().getValues();
+    var dateStr = params.date;
+    for (var mj = 1; mj < metaData.length; mj++) {
+      var rowDate = metaData[mj][0] instanceof Date
+        ? Utilities.formatDate(metaData[mj][0],'UTC','yyyy-MM-dd')
+        : (metaData[mj][0]||'').toString().slice(0,10);
+      if (rowDate === dateStr) {
+        return {meta: {
+          date: dateStr,
+          dayType: metaData[mj][1] || '',
+          totalOps: metaData[mj][2] || 0,
+          confirmedBy: metaData[mj][3] || '',
+          confirmedAt: metaData[mj][4] || '',
+          volumes: {
+            leasing: {total: metaData[mj][5]||0},
+            pie: {total: metaData[mj][6]||0},
+            pv: {total: metaData[mj][7]||0},
+            subsidio: {total: metaData[mj][8]||0},
+            brasil: {total: metaData[mj][9]||0}
+          },
+          distribution: JSON.parse(metaData[mj][10]||'{}')
+        }};
+      }
+    }
+    return {meta: null};
   }
 
   return {error: 'Acción no reconocida: ' + action};
@@ -2243,11 +2318,14 @@ async function confirmDay(){
       dayOps.forEach(op => { op._saved = true; });
       saveDraft();
     }
-    await store.set('meta:'+currentDate, JSON.stringify({
+    const metaObj = {
       date:currentDate, dayType, volumes:vols, distribution:planDistribution,
       confirmedAt:new Date().toISOString(), confirmedBy:currentUser||'--',
       totalOps:dayOps.length
-    }));
+    };
+    await store.set('meta:'+currentDate, JSON.stringify(metaObj));
+    // v2.0: guardar meta también en OperacionesV2 hoja Meta
+    setTimeout(()=>gsCall('setMeta', {date:currentDate, meta:metaObj}), 300);
     statusEl.textContent='✓ Reparto guardado el '+new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'})+'. Accesible para todo el equipo.';
     statusEl.style.color='var(--teal)';
     // No limpiar borrador -- las ops siguen visibles en Operaciones hasta nueva fecha o limpieza manual
@@ -2507,6 +2585,21 @@ async function verDia(date){
     seguimientoOps = r&&r.ops ? r.ops : [];
     currentDate=date;
     document.getElementById('date-badge').textContent=date;
+    // Cargar meta de planificación en paralelo
+    gsCall('getMeta',{date}).then(rm=>{
+      if(rm&&rm.meta){
+        const m = rm.meta;
+        const vols = m.volumes||{};
+        const badge = document.getElementById('refresh-badge');
+        if(badge) badge.textContent = 
+          'Planificado: Leasing '+(vols.leasing&&vols.leasing.total||0)+
+          ' · Pie '+(vols.pie&&vols.pie.total||0)+
+          ' · PV '+(vols.pv&&vols.pv.total||0)+
+          ' · Subsidio '+(vols.subsidio&&vols.subsidio.total||0)+
+          ' · Brasil '+(vols.brasil&&vols.brasil.total||0)+
+          ' | Confirmado por: '+(m.confirmedBy||'--');
+      }
+    }).catch(()=>{});
     goTo('seguimiento');
   } catch(e){ alert('No se pudieron cargar las operaciones de ese dia.'); }
 }
