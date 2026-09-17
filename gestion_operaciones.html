@@ -2343,14 +2343,8 @@ async function confirmDay(){
     });
     // Las ops con HECHO ya guardado no necesitan re-enviarse
     dayOps.forEach(op=>{ if(op.estado==='HECHO' && hechodMap[op.uid]) op._saved=true; });
-    // v2.0: enviar solo ops nuevas o modificadas (no todas)
-    const opsToSave = dayOps.filter(op => !op._saved);
-    if(opsToSave.length > 0){
-      await store.setOps(currentDate, opsToSave, currentUser||'--');
-      // Marcar como guardadas en memoria
-      dayOps.forEach(op => { op._saved = true; });
-      saveDraft();
-    }
+    // v1: guardar JSON blob completo
+    await store.set('ops:'+currentDate, JSON.stringify(dayOps));
     const metaObj = {
       date:currentDate, dayType, volumes:vols, distribution:planDistribution,
       confirmedAt:new Date().toISOString(), confirmedBy:currentUser||'--',
@@ -2369,14 +2363,8 @@ async function confirmDay(){
     statusEl.style.color='var(--amber)';
     setTimeout(async()=>{
       try{
-        // v2.0: enviar solo ops nuevas o modificadas (no todas)
-    const opsToSave = dayOps.filter(op => !op._saved);
-    if(opsToSave.length > 0){
-      await store.setOps(currentDate, opsToSave, currentUser||'--');
-      // Marcar como guardadas en memoria
-      dayOps.forEach(op => { op._saved = true; });
-      saveDraft();
-    }
+        // v1: guardar JSON blob completo
+    await store.set('ops:'+currentDate, JSON.stringify(dayOps));
         statusEl.textContent='✓ Reparto guardado (reintento exitoso) '+new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});
         statusEl.style.color='var(--teal)';
         gsLogRows(dayOps, currentUser, currentDate);
@@ -2429,9 +2417,8 @@ async function loadSeguimiento(){
   document.getElementById('seg-empty').innerHTML='';
   const backup = loadLocalBackup();
   try{
-    // v2.0: getOps (filas individuales, sin JSON blob)
-    const r=await store.getOps(currentDate);
-    const gsOps = r&&r.ops ? r.ops : [];
+    const r=await store.get('ops:'+currentDate);
+    const gsOps = r&&r.value?JSON.parse(r.value):[];
     // Merge GS data con backup local para no perder estados HECHO pendientes de sync
     seguimientoOps = mergeOps(gsOps, backup);
     // Actualizar backup con el merge resultante
@@ -2575,11 +2562,19 @@ async function toggleEstado(uid){
   saveLocalBackup(seguimientoOps);
   renderSeguimiento();
   // Guardar en GS en segundo plano con manejo robusto
-  // v2.0: markEstado actualiza solo 1 celda — ultra rápido, sin race condition
+  // v1: guardar JSON completo
   (async()=>{
     try{
-      await store.markEstado(op.uid, op.estado, op.completado_en||null);
-    } catch(e){ console.error('Error guardando estado en GS (preservado localmente):', e); }
+      const r = await store.get('ops:'+currentDate);
+      const gsOps = r&&r.value ? JSON.parse(r.value) : [];
+      const merged = gsOps.length ? gsOps.map(o=>{
+        if(o.uid===op.uid) return {...o, estado:op.estado, completado_en:op.completado_en};
+        const local = seguimientoOps.find(s=>s.uid===o.uid);
+        if(local && local.estado==='HECHO') return {...o, estado:'HECHO', completado_en:local.completado_en};
+        return o;
+      }) : seguimientoOps;
+      await store.set('ops:'+currentDate, JSON.stringify(merged));
+    } catch(e){ console.error('Error guardando en GS:', e); }
   })();
 }
 
@@ -2669,8 +2664,8 @@ async function loadMiTurno(){
 
   const backup = loadLocalBackup();
   try{
-    const r = await store.getOps(currentDate);
-    const gsOps = r&&r.ops ? r.ops : [];
+    const r = await store.get('ops:'+currentDate);
+    const gsOps = r&&r.value ? JSON.parse(r.value) : [];
     // Merge con backup local -- nunca pierde HECHO aunque GS tenga PENDIENTE
     seguimientoOps = mergeOps(gsOps, backup || seguimientoOps);
     saveLocalBackup(seguimientoOps);
@@ -2744,11 +2739,19 @@ async function toggleEstadoMiTurno(uid){
   dayOps = seguimientoOps.map(o=>({...o}));
   saveLocalBackup(seguimientoOps);
   loadMiTurno();
-  // v2.0: usar markEstado (actualiza solo 1 celda, sin race condition)
+  // v1: guardar JSON completo
   (async()=>{
     try{
-      await store.markEstado(op.uid, op.estado, op.completado_en||null);
-    } catch(e){ console.error('Error guardando estado en GS (preservado localmente):', e); }
+      const r = await store.get('ops:'+currentDate);
+      const gsOps = r&&r.value ? JSON.parse(r.value) : [];
+      const merged = gsOps.length ? gsOps.map(o=>{
+        if(o.uid===op.uid) return {...o, estado:op.estado, completado_en:op.completado_en};
+        const local = seguimientoOps.find(s=>s.uid===o.uid);
+        if(local && local.estado==='HECHO') return {...o, estado:'HECHO', completado_en:local.completado_en};
+        return o;
+      }) : seguimientoOps;
+      await store.set('ops:'+currentDate, JSON.stringify(merged));
+    } catch(e){ console.error('Error guardando en GS:', e); }
   })();
 }
 
@@ -3117,8 +3120,8 @@ window._autoRefreshTimer = setInterval(async function(){
 async function silentRefreshSeguimiento(){
   const backup = loadLocalBackup();
   try{
-    const r = await store.getOps(currentDate);
-    const gsOps = r&&r.ops ? r.ops : [];
+    const r = await store.get('ops:'+currentDate);
+    const gsOps = r&&r.value ? JSON.parse(r.value) : [];
     if(gsOps.length < seguimientoOps.length) return;
     const merged = mergeOps(gsOps, backup || seguimientoOps);
     const changed = JSON.stringify(merged) !== JSON.stringify(seguimientoOps);
