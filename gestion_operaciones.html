@@ -1103,9 +1103,9 @@ async function testSpConnection(){
 }
 
 // ─── GOOGLE SHEETS REST API ─────────────────────────────────────────────────
-async function gsCall(action, params){
+async function gsCall(action, params, _retry){
   const payload = JSON.stringify({action, ...params});
-  // Usar XMLHttpRequest para evitar problemas CORS con Google Apps Script
+  _retry = _retry || 0;
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', GS_CONFIG.scriptUrl, true);
@@ -1114,11 +1114,24 @@ async function gsCall(action, params){
       if(xhr.status >= 200 && xhr.status < 300){
         try{ resolve(JSON.parse(xhr.responseText)); }
         catch(e){ reject(new Error('Respuesta inválida del script.')); }
+      } else if(xhr.status === 404 && _retry < 2){
+        // Reintento con espera exponencial (1s, 2s)
+        setTimeout(()=>{
+          gsCall(action, params, _retry+1).then(resolve).catch(reject);
+        }, (1000 * Math.pow(2, _retry)));
       } else {
         reject(new Error('Error HTTP '+xhr.status+'. Verifica que el script esté publicado.'));
       }
     };
-    xhr.onerror = function(){ reject(new Error('Failed to fetch — verifica la conexión.')); };
+    xhr.onerror = function(){
+      if(_retry < 2){
+        setTimeout(()=>{
+          gsCall(action, params, _retry+1).then(resolve).catch(reject);
+        }, (1000 * Math.pow(2, _retry)));
+      } else {
+        reject(new Error('Sin conexión con Apps Script.'));
+      }
+    };
     xhr.ontimeout = function(){ reject(new Error('Timeout — Apps Script tardó demasiado.')); };
     xhr.timeout = 30000;
     xhr.send(payload);
@@ -3096,7 +3109,7 @@ window._autoRefreshTimer = setInterval(async function(){
   } finally {
     window._refreshInProgress = false;
   }
-}, 30000); // 30 segundos
+}, 120000); // 2 minutos
 
 // Registrar actividad del usuario para no interrumpir mientras trabaja
 ['click','keydown'].forEach(ev => document.addEventListener(ev, ()=>{ _lastRefresh = Date.now(); }));
