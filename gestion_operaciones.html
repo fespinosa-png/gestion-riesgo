@@ -1545,6 +1545,13 @@ function initDate(){
 }
 
 // ─── DAY TYPE ───────────────────────────────────────────────────────────────
+function autoDetectDayType(){
+  const day = new Date().getDay(); // 0=Dom, 1=Lun, ..., 5=Vie, 6=Sáb
+  if(day === 0 || day === 6) return 'FDS';
+  if(day === 5) return 'V';
+  return 'LJ';
+}
+
 function setDayType(t){
   dayType = t;
   document.getElementById('btn-lj').classList.toggle('active', t==='LJ');
