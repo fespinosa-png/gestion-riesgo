@@ -2709,14 +2709,14 @@ async function toggleEstadoMiTurno(uid){
   op.estado = op.estado==='PENDIENTE'?'HECHO':'PENDIENTE';
   op.completado_en = op.estado==='HECHO'?new Date().toISOString():null;
   dayOps = seguimientoOps.map(o=>({...o}));
-  // Guardar backup local inmediato
   saveLocalBackup(seguimientoOps);
-  // Re-renderizar inmediatamente
   loadMiTurno();
-  // Guardar en GS en segundo plano
-  store.set('ops:'+currentDate, JSON.stringify(seguimientoOps))
-    .then(()=>{ setTimeout(()=>gsLogRows([op], op.analista||currentUser, currentDate), 200); })
-    .catch(e=>{ console.error('Error guardando en GS (preservado localmente):', e); });
+  // v2.0: usar markEstado (actualiza solo 1 celda, sin race condition)
+  (async()=>{
+    try{
+      await store.markEstado(op.uid, op.estado, op.completado_en||null);
+    } catch(e){ console.error('Error guardando estado en GS (preservado localmente):', e); }
+  })();
 }
 
 async function saveIdentificador(uid, value){
