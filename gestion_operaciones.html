@@ -1105,16 +1105,24 @@ async function testSpConnection(){
 // ─── GOOGLE SHEETS REST API ─────────────────────────────────────────────────
 async function gsCall(action, params){
   const payload = JSON.stringify({action, ...params});
-  const r = await fetch(GS_CONFIG.scriptUrl, {
-    method:'POST',
-    body:payload,
-    redirect:'follow',
-    headers:{'Content-Type':'text/plain'}
+  // Usar XMLHttpRequest para evitar problemas CORS con Google Apps Script
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', GS_CONFIG.scriptUrl, true);
+    xhr.setRequestHeader('Content-Type', 'text/plain');
+    xhr.onload = function(){
+      if(xhr.status >= 200 && xhr.status < 300){
+        try{ resolve(JSON.parse(xhr.responseText)); }
+        catch(e){ reject(new Error('Respuesta inválida del script.')); }
+      } else {
+        reject(new Error('Error HTTP '+xhr.status+'. Verifica que el script esté publicado.'));
+      }
+    };
+    xhr.onerror = function(){ reject(new Error('Failed to fetch — verifica la conexión.')); };
+    xhr.ontimeout = function(){ reject(new Error('Timeout — Apps Script tardó demasiado.')); };
+    xhr.timeout = 30000;
+    xhr.send(payload);
   });
-  if(!r.ok) throw new Error('Error HTTP '+r.status+'. Verifica que el script esté publicado.');
-  const text = await r.text();
-  try{ return JSON.parse(text); }
-  catch(e){ throw new Error('Respuesta inválida del script. Verifica que esté publicado correctamente.'); }
 }
 
 async function gsSet(key, value){ await gsCall('set',{key,value}); return {key,value}; }
