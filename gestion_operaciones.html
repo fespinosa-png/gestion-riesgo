@@ -1141,6 +1141,32 @@ async function testSpConnection(){
 }
 
 // ─── GOOGLE SHEETS REST API ─────────────────────────────────────────────────
+// ── Firebase Realtime Database (reemplaza Apps Script para storage) ──────
+const FB_BASE = 'https://asignador-de-operaciones-default-rtdb.firebaseio.com/gestion';
+
+async function fbGet(path){
+  const r = await fetch(FB_BASE+'/'+path+'.json');
+  if(!r.ok) throw new Error('Firebase GET error: '+r.status);
+  return r.json();
+}
+
+async function fbSet(path, value){
+  const r = await fetch(FB_BASE+'/'+path+'.json',{
+    method:'PUT', body:JSON.stringify(value),
+    headers:{'Content-Type':'application/json'}
+  });
+  if(!r.ok) throw new Error('Firebase SET error: '+r.status);
+  return r.json();
+}
+
+async function fbPing(){
+  const r = await fetch('https://asignador-de-operaciones-default-rtdb.firebaseio.com/.json?shallow=true');
+  return r.ok;
+}
+
+// Apps Script solo para getMHEPendientes (lectura desde SÁBANA_MAESTRA)
+const GS_MHE_URL = 'https://script.google.com/macros/s/AKfycbzMi1HfEB58fgrx0U2qzwhFNN5L--lGoGQl42Uih903xovSqqu95vJYsV9_5wpxDaG9/exec';
+
 async function gsCall(action, params, _retry){
   const payload = JSON.stringify({action, ...params});
   _retry = _retry || 0;
@@ -1266,38 +1292,73 @@ async function spList(prefix){
 
 // ─── STORAGE ABSTRACTION ────────────────────────────────────────────────────
 var store = {
-  async set(key, value){
-    const mode = getStoreMode();
-    if(mode==='gs') return gsSet(key,value);
-    if(mode==='sharepoint') return spSet(key,value);
-    localStorage.setItem('gestion:'+key, value);
-    return {key,value};
+  // ── Firebase como backend principal (sin CORS, sin timeouts) ──────────
+  async set(key,val){
+    try{
+      const path = key.replace(':','/');
+      await fbSet(path, val);
+      return {key,value:val};
+    }catch(e){ console.error('FB set error:',e); throw e; }
   },
   async get(key){
-    const mode = getStoreMode();
-    if(mode==='gs'){ try{ return await gsGet(key); }catch(e){ console.error('GS get:',e); return null; } }
-    if(mode==='sharepoint'){ try{ return await spGet(key); }catch(e){ console.error('SP get:',e); return null; } }
-    const v = localStorage.getItem('gestion:'+key);
-    return v?{key,value:v}:null;
+    try{
+      const path = key.replace(':','/');
+      const data = await fbGet(path);
+      return data!==null && data!==undefined ? {key,value:data} : null;
+    }catch(e){ console.error('FB get error:',e); return null; }
   },
-  async list(prefix){
-    const mode = getStoreMode();
-    if(mode==='gs'){ try{ return await gsList(prefix); }catch(e){ console.error('GS list:',e); return {keys:[]}; } }
-    if(mode==='sharepoint'){ try{ return await spList(prefix); }catch(e){ console.error('SP list:',e); return {keys:[]}; } }
-    const keys=[];
-    for(let i=0;i<localStorage.length;i++){
-      const k=localStorage.key(i);
-      if(k&&k.startsWith('gestion:'+(prefix||''))) keys.push(k.replace('gestion:',''));
-    }
-    return {keys};
+  async list(prefix){ return {keys:[]}; },
+  async getOps(date){
+    try{
+      const data = await fbGet('ops/'+date);
+      if(!data) return {ops:[]};
+      const ops = typeof data==='string' ? JSON.parse(data) : (Array.isArray(data)?data:[]);
+      return {ops};
+    }catch(e){ return {ops:[]}; }
   },
-  // v2.0: operaciones individuales (sin race conditions)
-  async getOps(date){ try{ return await gsGetOps(date); }catch(e){ console.error('GS getOps:',e); return {ops:[]}; } },
-  async setOps(date,ops,confirmedBy){ try{ return await gsSetOps(date,ops,confirmedBy); }catch(e){ console.error('GS setOps:',e); return {success:false}; } },
-  async markEstado(uid,estado,ts){ try{ return await gsMarkEstado(uid,estado,ts); }catch(e){ console.error('GS markEstado:',e); } },
-  async updateField(uid,field,value){ try{ return await gsUpdateField(uid,field,value); }catch(e){ console.error('GS updateField:',e); } },
-  async getHistorial(){ try{ return await gsGetHistorial(); }catch(e){ console.error('GS getHistorial:',e); return {days:[]}; } },
-  async autoMigrate(date){ try{ return await gsCall('autoMigrate',{date}); }catch(e){} }
+  async setOps(date,ops,confirmedBy){
+    try{
+      await fbSet('ops/'+date, JSON.stringify(ops));
+      return {success:true};
+    }catch(e){ console.error('FB setOps:',e); return {success:false}; }
+  },
+  async markEstado(uid,estado,ts){
+    try{
+      const data = await fbGet('ops/'+currentDate);
+      let ops = data ? (typeof data==='string'?JSON.parse(data):(Array.isArray(data)?data:[])) : [];
+      const idx = ops.findIndex(o=>o.uid===uid);
+      if(idx>=0){
+        ops[idx].estado=estado;
+        ops[idx].completado_en=ts||null;
+        await fbSet('ops/'+currentDate, JSON.stringify(ops));
+      }
+      return {success:true};
+    }catch(e){ console.error('FB markEstado:',e); }
+  },
+  async updateField(uid,field,value){
+    try{
+      const data = await fbGet('ops/'+currentDate);
+      let ops = data ? (typeof data==='string'?JSON.parse(data):(Array.isArray(data)?data:[])) : [];
+      const idx = ops.findIndex(o=>o.uid===uid);
+      if(idx>=0){ ops[idx][field]=value; await fbSet('ops/'+currentDate, JSON.stringify(ops)); }
+      return {success:true};
+    }catch(e){ console.error('FB updateField:',e); }
+  },
+  async getHistorial(){
+    try{
+      const data = await fbGet('ops');
+      if(!data) return {days:[]};
+      const days = Object.keys(data).map(date=>{
+        let ops=[];
+        try{ ops=typeof data[date]==='string'?JSON.parse(data[date]):(Array.isArray(data[date])?data[date]:[]); }catch(e){}
+        const hechos=ops.filter(o=>o.estado==='HECHO').length;
+        const confirmedBy=ops.length>0?(ops[0].confirmedBy||'--'):'--';
+        return {date,total:ops.length,hechos,confirmedBy};
+      }).sort((a,b)=>b.date.localeCompare(a.date));
+      return {days};
+    }catch(e){ console.error('FB getHistorial:',e); return {days:[]}; }
+  },
+  async autoMigrate(date){ return {migrated:0}; }
 };
 
 function showStorageBanner(){ updateConnBadge(); }
