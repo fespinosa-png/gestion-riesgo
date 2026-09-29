@@ -198,6 +198,10 @@ tr:last-child td{border-bottom:none;}
   .dup-warning::before{content:"⚠";font-size:12px;}
   .op-row.has-dup input[type=text]{border-color:var(--red);background:var(--red-light);}
 </style>
+  <!-- Firebase Auth -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
 </head>
 <body>
 
@@ -1141,17 +1145,110 @@ async function testSpConnection(){
 }
 
 // ─── GOOGLE SHEETS REST API ─────────────────────────────────────────────────
-// ── Firebase Realtime Database (reemplaza Apps Script para storage) ──────
+// ── Firebase Init + Auth ─────────────────────────────────────────────────
+const firebaseConfig = {
+  apiKey: "AIzaSyBc4sZh_8XE1Hchn9DThfx7kg0RXA4tMD8",
+  authDomain: "asignador-de-operaciones.firebaseapp.com",
+  databaseURL: "https://asignador-de-operaciones-default-rtdb.firebaseio.com",
+  projectId: "asignador-de-operaciones",
+  storageBucket: "asignador-de-operaciones.firebasestorage.app",
+  messagingSenderId: "369971392139",
+  appId: "1:369971392139:web:aa4f7bc810b8d45410ae8e"
+};
+
+if(!firebase.apps.length){ firebase.initializeApp(firebaseConfig); }
+const fbAuth = firebase.auth();
+const fbDB = firebase.database();
+
+var _fbUser = null; // usuario autenticado actual
+
+// Iniciar sesión con Google al cargar
+function initFirebaseAuth(){
+  fbAuth.onAuthStateChanged(user => {
+    if(user){
+      // Verificar dominio @creditu.com
+      if(!user.email.endsWith('@creditu.com')){
+        fbAuth.signOut();
+        showAuthError('Solo se permiten cuentas @creditu.com. Tu cuenta: '+user.email);
+        return;
+      }
+      _fbUser = user;
+      hideAuthOverlay();
+      // Auto-detectar analista por email
+      const localPart = user.email.split('@')[0].toLowerCase();
+      const match = matchGoogleEmailToTeam(user.email);
+      if(match && !currentUser){
+        setCurrentUser(match);
+        const sel = document.getElementById('user-select');
+        if(sel) sel.value = match;
+      }
+    } else {
+      _fbUser = null;
+      showAuthOverlay();
+    }
+  });
+}
+
+function showAuthOverlay(){
+  let overlay = document.getElementById('auth-overlay');
+  if(!overlay){
+    overlay = document.createElement('div');
+    overlay.id = 'auth-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:var(--navy);display:flex;align-items:center;justify-content:center;z-index:9999;flex-direction:column;gap:20px;';
+    overlay.innerHTML = `
+      <div style="text-align:center;">
+        <div style="font-size:32px;font-weight:800;color:#fff;margin-bottom:8px;">Creditú</div>
+        <div style="font-size:16px;color:#AABBD0;margin-bottom:32px;">Gestión de Operaciones — Riesgo</div>
+        <button onclick="signInWithGoogle()" style="background:#fff;color:#002960;border:none;padding:14px 28px;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:10px;margin:0 auto;">
+          <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" style="width:20px;height:20px;"> Ingresar con cuenta Creditú
+        </button>
+        <div id="auth-error" style="color:#FF6B6B;font-size:13px;margin-top:16px;"></div>
+      </div>`;
+    document.body.appendChild(overlay);
+  }
+  overlay.style.display = 'flex';
+}
+
+function hideAuthOverlay(){
+  const overlay = document.getElementById('auth-overlay');
+  if(overlay) overlay.style.display = 'none';
+}
+
+function showAuthError(msg){
+  const el = document.getElementById('auth-error');
+  if(el) el.textContent = msg;
+}
+
+async function signInWithGoogle(){
+  const provider = new firebase.auth.GoogleAuthProvider();
+  provider.setCustomParameters({hd: 'creditu.com'});
+  try{
+    await fbAuth.signInWithPopup(provider);
+  } catch(e){
+    showAuthError('Error al iniciar sesión. Intenta de nuevo.');
+  }
+}
+
+// ── Firebase Realtime Database ────────────────────────────────────────────
 const FB_BASE = 'https://asignador-de-operaciones-default-rtdb.firebaseio.com/gestion';
 
+async function fbToken(){
+  if(!_fbUser) return '';
+  try{ return await _fbUser.getIdToken(); } catch(e){ return ''; }
+}
+
 async function fbGet(path){
-  const r = await fetch(FB_BASE+'/'+path+'.json');
+  const token = await fbToken();
+  const url = FB_BASE+'/'+path+'.json'+(token?'?auth='+token:'');
+  const r = await fetch(url);
   if(!r.ok) throw new Error('Firebase GET error: '+r.status);
   return r.json();
 }
 
 async function fbSet(path, value){
-  const r = await fetch(FB_BASE+'/'+path+'.json',{
+  const token = await fbToken();
+  const url = FB_BASE+'/'+path+'.json'+(token?'?auth='+token:'');
+  const r = await fetch(url,{
     method:'PUT', body:JSON.stringify(value),
     headers:{'Content-Type':'application/json'}
   });
@@ -1160,8 +1257,10 @@ async function fbSet(path, value){
 }
 
 async function fbPing(){
-  const r = await fetch('https://asignador-de-operaciones-default-rtdb.firebaseio.com/.json?shallow=true');
-  return r.ok;
+  try{
+    const r = await fetch('https://asignador-de-operaciones-default-rtdb.firebaseio.com/.json?shallow=true');
+    return r.ok;
+  } catch(e){ return false; }
 }
 
 // Apps Script solo para getMHEPendientes (lectura desde SÁBANA_MAESTRA)
@@ -3164,6 +3263,7 @@ initUserSelect();
 initAvailability();
 buildProdGrid();
 // Cargar equipo desde GS (configuracion persistente)
+initFirebaseAuth();
 loadTeamFromGS().then(()=>{ renderEquipo(); initUserSelect(); });
 // Auto-detectar tipo de día, luego restaurar planificación guardada si existe
 dayType = autoDetectDayType();
