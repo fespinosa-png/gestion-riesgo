@@ -570,6 +570,44 @@ function handleRequest(params) {
   // ── ping ──────────────────────────────────────────────────
   if (action === 'ping') return {ok: true, version: '2.0'};
 
+  // ── autoMigrate: migrar ops de GestionOps a OperacionesV2 si faltan ──────
+  if (action === 'autoMigrate') {
+    var date = params.date;
+    var sheet = getOpsSheet();
+    var result = buildUIDMap(sheet);
+    // Contar ops ya en OperacionesV2 para esta fecha
+    var existing = 0;
+    for (var i = 1; i < result.data.length; i++) {
+      var rowDate = result.data[i][C.FECHA] instanceof Date
+        ? Utilities.formatDate(result.data[i][C.FECHA],'UTC','yyyy-MM-dd')
+        : (result.data[i][C.FECHA]||'').toString().slice(0,10);
+      if (rowDate === date) existing++;
+    }
+    // Si ya hay ops para esa fecha, no migrar
+    if (existing > 0) return {migrated: 0, existing: existing};
+    // Buscar en GestionOps
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var legacySheet = ss.getSheetByName('GestionOps');
+    if (!legacySheet) return {migrated: 0, error: 'No existe GestionOps'};
+    var legacyData = legacySheet.getDataRange().getValues();
+    for (var j = 1; j < legacyData.length; j++) {
+      if (legacyData[j][0] === 'ops:' + date && legacyData[j][1]) {
+        try {
+          var ops = JSON.parse(legacyData[j][1]);
+          if (!ops || !ops.length) return {migrated: 0};
+          var rows = ops.map(function(op) {
+            return opToRow(op, date, op.confirmedBy||'');
+          });
+          sheet.getRange(result.total+1, 1, rows.length, NCOLS).setValues(rows);
+          return {migrated: rows.length, date: date};
+        } catch(e) {
+          return {migrated: 0, error: e.toString()};
+        }
+      }
+    }
+    return {migrated: 0, notFound: true};
+  }
+
   // ── getHistorial: obtener días únicos con resumen ─────────
   if (action === 'getHistorial') {
     var sheet = getOpsSheet();
@@ -965,7 +1003,7 @@ var SP_CONFIG = {
 };
 
 var GS_CONFIG = {
-  scriptUrl: localStorage.getItem('gs_scriptUrl') || 'https://script.google.com/macros/s/AKfycbyWBdfn48Fm_X5ObBxxK946T3YbHuZlB_DYNUthMWUdaq9nV4ivtbhPhVUxa-w4cuwR/exec'
+  scriptUrl: localStorage.getItem('gs_scriptUrl') || 'https://script.google.com/macros/s/AKfycbzMi1HfEB58fgrx0U2qzwhFNN5L--lGoGQl42Uih903xovSqqu95vJYsV9_5wpxDaG9/exec'
 };
 
 function getStoreMode(){
@@ -1258,7 +1296,8 @@ var store = {
   async setOps(date,ops,confirmedBy){ try{ return await gsSetOps(date,ops,confirmedBy); }catch(e){ console.error('GS setOps:',e); return {success:false}; } },
   async markEstado(uid,estado,ts){ try{ return await gsMarkEstado(uid,estado,ts); }catch(e){ console.error('GS markEstado:',e); } },
   async updateField(uid,field,value){ try{ return await gsUpdateField(uid,field,value); }catch(e){ console.error('GS updateField:',e); } },
-  async getHistorial(){ try{ return await gsGetHistorial(); }catch(e){ console.error('GS getHistorial:',e); return {days:[]}; } }
+  async getHistorial(){ try{ return await gsGetHistorial(); }catch(e){ console.error('GS getHistorial:',e); return {days:[]}; } },
+  async autoMigrate(date){ try{ return await gsCall('autoMigrate',{date}); }catch(e){} }
 };
 
 function showStorageBanner(){ updateConnBadge(); }
@@ -2343,8 +2382,13 @@ async function confirmDay(){
     });
     // Las ops con HECHO ya guardado no necesitan re-enviarse
     dayOps.forEach(op=>{ if(op.estado==='HECHO' && hechodMap[op.uid]) op._saved=true; });
-    // v1: guardar JSON blob completo
+    // Guardar en GestionOps (v1 - siempre funciona, respaldo confiable)
     await store.set('ops:'+currentDate, JSON.stringify(dayOps));
+    // Guardar en OperacionesV2 (v2 - en segundo plano, para Historial)
+    setTimeout(()=>{
+      store.setOps(currentDate, dayOps, currentUser||'--')
+        .catch(e=>console.warn('setOps en background falló (ops ya en GestionOps):', e));
+    }, 500);
     const metaObj = {
       date:currentDate, dayType, volumes:vols, distribution:planDistribution,
       confirmedAt:new Date().toISOString(), confirmedBy:currentUser||'--',
@@ -2363,8 +2407,13 @@ async function confirmDay(){
     statusEl.style.color='var(--amber)';
     setTimeout(async()=>{
       try{
-        // v1: guardar JSON blob completo
+        // Guardar en GestionOps (v1 - siempre funciona, respaldo confiable)
     await store.set('ops:'+currentDate, JSON.stringify(dayOps));
+    // Guardar en OperacionesV2 (v2 - en segundo plano, para Historial)
+    setTimeout(()=>{
+      store.setOps(currentDate, dayOps, currentUser||'--')
+        .catch(e=>console.warn('setOps en background falló (ops ya en GestionOps):', e));
+    }, 500);
         statusEl.textContent='✓ Reparto guardado (reintento exitoso) '+new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});
         statusEl.style.color='var(--teal)';
         gsLogRows(dayOps, currentUser, currentDate);
@@ -2581,8 +2630,16 @@ async function toggleEstado(uid){
 // ─── HISTORIAL PAGE ──────────────────────────────────────────────────────────
 async function loadHistorial(){
   const container=document.getElementById('hist-body');
-  container.innerHTML='<div class="loading">Cargando historial desde OperacionesV2...</div>';
+  container.innerHTML='<div class="loading">Cargando historial...</div>';
   try{
+    // Auto-migrar los últimos 7 días que puedan faltar en OperacionesV2
+    const today = new Date();
+    for(let d=1; d<=7; d++){
+      const dt = new Date(today);
+      dt.setDate(today.getDate()-d);
+      const dateStr = dt.toISOString().slice(0,10);
+      gsCall('autoMigrate',{date:dateStr}).catch(()=>{});
+    }
     const r = await store.getHistorial();
     const days = r&&r.days ? r.days : [];
     if(!days.length){
