@@ -214,6 +214,7 @@ tr:last-child td{border-bottom:none;}
   <div class="nav-tab" id="mi-turno-tab" onclick="goTo('miturno')">Mi turno</div>
   <div class="nav-tab" id="equipo-tab" onclick="goTo('equipo')">Equipo</div>
   <div class="nav-tab" onclick="goTo('historial')">Historial</div>
+  <div class="nav-tab" id="nav-dashboard" onclick="goTo('dashboard')">📊 Dashboard</div>
   <div class="right">
     <span class="date-badge" id="date-badge"></span>
     <span id="conn-badge" style="font-size:11px;padding:3px 8px;border-radius:20px;cursor:pointer;" onclick="openSettings()" title="Configuración de conexión"></span>
@@ -395,6 +396,16 @@ tr:last-child td{border-bottom:none;}
 </div>
 
 <!-- PAGE 4: HISTORIAL -->
+<div class="page" id="page-dashboard">
+  <div style="padding:0 0 16px 0;">
+    <h2 style="font-size:20px;font-weight:700;color:var(--navy);margin:0 0 4px 0;">Dashboard Semanal</h2>
+    <div id="dashboard-week-label" style="font-size:13px;color:var(--gray-text);"></div>
+  </div>
+  <div id="dashboard-body" style="display:flex;flex-direction:column;gap:20px;">
+    <div class="loading">Cargando dashboard...</div>
+  </div>
+</div>
+
 <div class="page" id="page-historial">
   <div class="panel">
     <div class="panel-title">Historial de repartos confirmados</div>
@@ -1643,10 +1654,11 @@ function goTo(tab){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('page-'+tab).classList.add('active');
-  const tabs = {plan:0,ops:1,seguimiento:2,miturno:3,equipo:4,historial:5};
+  const tabs = {plan:0,ops:1,seguimiento:2,miturno:3,equipo:4,historial:5,dashboard:6};
   document.querySelectorAll('.nav-tab')[tabs[tab]].classList.add('active');
   if(tab==='seguimiento') loadSeguimiento();
   if(tab==='historial') loadHistorial();
+  if(tab==='dashboard') loadDashboard();
   if(tab==='ops'){ ensureTeamReady().then(()=>loadOpsForToday()).then(()=>{ buildOpsEntry(); updateConfirmDateLabel(); updateDraftBadge(); }); }
   if(tab==='miturno') loadMiTurno();
   if(tab==='equipo') renderEquipo();
@@ -2547,12 +2559,24 @@ async function confirmDay(){
     });
     // Las ops con HECHO ya guardado no necesitan re-enviarse
     dayOps.forEach(op=>{ if(op.estado==='HECHO' && hechodMap[op.uid]) op._saved=true; });
-    // Guardar en GestionOps (v1 - siempre funciona, respaldo confiable)
+    // Guardar ops en Firebase (y GestionOps como respaldo)
     await store.set('ops:'+currentDate, JSON.stringify(dayOps));
-    // Guardar en OperacionesV2 (v2 - en segundo plano, para Historial)
-    setTimeout(()=>{
+    // Guardar planificación del día en Firebase para el Dashboard
+    setTimeout(async()=>{
+      try{
+        const planData = {
+          date: currentDate,
+          dayType: dayType,
+          confirmedBy: currentUser||'--',
+          confirmedAt: new Date().toISOString(),
+          totalOps: dayOps.length,
+          vols: planVols
+        };
+        await fbSet('planificacion/'+currentDate, JSON.stringify(planData));
+      }catch(e){ console.warn('No se pudo guardar planificación en Firebase:', e); }
+      // También intentar OperacionesV2 en background
       store.setOps(currentDate, dayOps, currentUser||'--')
-        .catch(e=>console.warn('setOps en background falló (ops ya en GestionOps):', e));
+        .catch(e=>console.warn('setOps en background falló:', e));
     }, 500);
     const metaObj = {
       date:currentDate, dayType, volumes:vols, distribution:planDistribution,
@@ -2572,12 +2596,24 @@ async function confirmDay(){
     statusEl.style.color='var(--amber)';
     setTimeout(async()=>{
       try{
-        // Guardar en GestionOps (v1 - siempre funciona, respaldo confiable)
+        // Guardar ops en Firebase (y GestionOps como respaldo)
     await store.set('ops:'+currentDate, JSON.stringify(dayOps));
-    // Guardar en OperacionesV2 (v2 - en segundo plano, para Historial)
-    setTimeout(()=>{
+    // Guardar planificación del día en Firebase para el Dashboard
+    setTimeout(async()=>{
+      try{
+        const planData = {
+          date: currentDate,
+          dayType: dayType,
+          confirmedBy: currentUser||'--',
+          confirmedAt: new Date().toISOString(),
+          totalOps: dayOps.length,
+          vols: planVols
+        };
+        await fbSet('planificacion/'+currentDate, JSON.stringify(planData));
+      }catch(e){ console.warn('No se pudo guardar planificación en Firebase:', e); }
+      // También intentar OperacionesV2 en background
       store.setOps(currentDate, dayOps, currentUser||'--')
-        .catch(e=>console.warn('setOps en background falló (ops ya en GestionOps):', e));
+        .catch(e=>console.warn('setOps en background falló:', e));
     }, 500);
         statusEl.textContent='✓ Reparto guardado (reintento exitoso) '+new Date().toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});
         statusEl.style.color='var(--teal)';
@@ -2793,6 +2829,257 @@ async function toggleEstado(uid){
 }
 
 // ─── HISTORIAL PAGE ──────────────────────────────────────────────────────────
+async function loadDashboard(){
+  const body = document.getElementById('dashboard-body');
+  const weekLabel = document.getElementById('dashboard-week-label');
+  body.innerHTML = '<div class="loading">Cargando datos de la semana...</div>';
+
+  try{
+    // Calcular días de la semana actual (lun-hoy)
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    const monday = new Date(today);
+    monday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+
+    const weekDays = [];
+    for(let i=0; i<7; i++){
+      const d = new Date(monday);
+      d.setDate(monday.getDate()+i);
+      if(d <= today) weekDays.push(d.toISOString().slice(0,10));
+    }
+
+    weekLabel.textContent = 'Semana: '+weekDays[0]+' → '+weekDays[weekDays.length-1];
+
+    // Cargar ops y planificación de todos los días desde Firebase
+    const allOps = [];
+    const planPorDia = {};
+    for(const date of weekDays){
+      try{
+        const data = await fbGet('ops/'+date);
+        if(data){
+          let ops = typeof data==='string'?JSON.parse(data):(Array.isArray(data)?data:[]);
+          ops.forEach(op=>{ op._date=date; allOps.push(op); });
+        }
+      }catch(e){}
+      try{
+        const planData = await fbGet('planificacion/'+date);
+        if(planData){
+          const plan = typeof planData==='string'?JSON.parse(planData):planData;
+          planPorDia[date] = plan;
+        }
+      }catch(e){}
+    }
+
+    if(!allOps.length){
+      body.innerHTML = '<div class="empty">Sin datos para esta semana.</div>';
+      return;
+    }
+
+    // Totales de la semana
+    const totalSemana = allOps.length;
+    const hechasSemana = allOps.filter(o=>o.estado==='HECHO').length;
+    const pendientesSemana = allOps.filter(o=>o.estado==='PENDIENTE').length;
+    const pctSemana = totalSemana>0?Math.round(hechasSemana/totalSemana*100):0;
+    const colorPct = pctSemana>=80?'var(--teal)':pctSemana>=50?'var(--cyan)':'var(--amber)';
+
+    // Riesgo SLA: pendientes por tier
+    const pendientesPorTier = {vencido:0, urgente:0, normal:0};
+    allOps.filter(o=>o.estado==='PENDIENTE').forEach(op=>{
+      const tier = (op.tier||'normal').toLowerCase();
+      if(pendientesPorTier[tier]!==undefined) pendientesPorTier[tier]++;
+      else pendientesPorTier.normal++;
+    });
+
+    // Por producto (pendientes)
+    const pendientesPorProducto = {};
+    allOps.filter(o=>o.estado==='PENDIENTE').forEach(op=>{
+      const prod = op.productName||op.productKey||'Otro';
+      pendientesPorProducto[prod] = (pendientesPorProducto[prod]||0) + 1;
+    });
+
+    // Planificación total de la semana
+    let totalPlanificado = 0;
+    Object.values(planPorDia).forEach(plan=>{
+      if(plan.vols){
+        Object.values(plan.vols).forEach(v=>{ totalPlanificado += parseInt(v.total||0); });
+      } else if(plan.totalOps){
+        totalPlanificado += plan.totalOps;
+      }
+    });
+
+    // Por analista
+    const porAnalista = {};
+    allOps.forEach(op=>{
+      const a = op.analista||'Sin asignar';
+      if(!porAnalista[a]) porAnalista[a]={total:0,hechas:0,pendientes:0};
+      porAnalista[a].total++;
+      if(op.estado==='HECHO') porAnalista[a].hechas++;
+      else porAnalista[a].pendientes++;
+    });
+
+    // Por día
+    const porDia = {};
+    weekDays.forEach(d=>{ porDia[d]={total:0,hechas:0,planificado:0}; });
+    allOps.forEach(op=>{
+      if(porDia[op._date]){
+        porDia[op._date].total++;
+        if(op.estado==='HECHO') porDia[op._date].hechas++;
+      }
+    });
+    // Agregar planificado por día
+    Object.entries(planPorDia).forEach(([date, plan])=>{
+      if(porDia[date]){
+        let planTotal = 0;
+        if(plan.vols) Object.values(plan.vols).forEach(v=>{ planTotal+=parseInt(v.total||0); });
+        else planTotal = plan.totalOps||0;
+        porDia[date].planificado = planTotal;
+      }
+    });
+
+    // Ordenar analistas por hechas desc
+    const analistas = Object.entries(porAnalista)
+      .filter(([a])=>a!=='Sin asignar')
+      .sort((a,b)=>b[1].hechas-a[1].hechas);
+
+    // Construir HTML del dashboard sin template literals anidados
+    const kpisBg = pctSemana>=80?'#e8f5e9':pctSemana>=50?'var(--cyan-light)':'#faeeda';
+    
+    let analistasHTML = '';
+    analistas.forEach(function(item){
+      const nombre = item[0], stats = item[1];
+      const pct = stats.total>0?Math.round(stats.hechas/stats.total*100):0;
+      const color = pct>=80?'var(--teal)':pct>=50?'var(--cyan)':'var(--amber)';
+      analistasHTML += '<div style="margin-bottom:14px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;"><span style="font-size:13px;font-weight:600;color:var(--navy);">'+nombre+'</span><span style="font-size:12px;color:var(--gray-text);">'+stats.hechas+'/'+stats.total+' ('+pct+'%)</span></div><div style="background:var(--gray-line);border-radius:6px;height:10px;overflow:hidden;"><div style="background:'+color+';height:100%;width:'+pct+'%;border-radius:6px;transition:width 0.5s;"></div></div></div>';
+    });
+
+    let diasHTML = '';
+    weekDays.forEach(function(date){
+      const stats = porDia[date]||{total:0,hechas:0};
+      const pct = stats.total>0?Math.round(stats.hechas/stats.total*100):0;
+      const color = pct>=80?'var(--teal)':pct>=50?'var(--cyan)':'var(--amber)';
+      const isToday = date===todayISO();
+      const dayName = new Date(date+'T12:00:00').toLocaleDateString('es-CL',{weekday:'short'});
+      const dayNum = date.slice(8);
+      diasHTML += '<div style="border:1.5px solid '+(isToday?'var(--navy)':'var(--gray-line)')+';border-radius:10px;padding:10px;text-align:center;background:'+(isToday?'var(--cyan-light)':'#fff')+';"><div style="font-size:11px;font-weight:600;color:var(--gray-text);text-transform:uppercase;">'+dayName+' '+dayNum+'</div><div style="font-size:20px;font-weight:800;color:'+color+';margin:6px 0;">'+pct+'%</div><div style="font-size:11px;color:var(--gray-text);">'+stats.hechas+'/'+stats.total+'</div></div>';
+    });
+
+    // Histórico por día (tabla detalle)
+    let historicoHTML = '<table style="width:100%;border-collapse:collapse;">'
+      + '<thead><tr style="background:var(--navy);color:#fff;">'
+      + '<th style="padding:8px 10px;text-align:left;font-size:12px;font-weight:600;">Fecha</th>'
+      + '<th style="padding:8px 10px;text-align:center;font-size:12px;font-weight:600;">Planificadas</th>'
+      + '<th style="padding:8px 10px;text-align:center;font-size:12px;font-weight:600;">Asignadas</th>'
+      + '<th style="padding:8px 10px;text-align:center;font-size:12px;font-weight:600;color:#81ecec;">HECHO</th>'
+      + '<th style="padding:8px 10px;text-align:center;font-size:12px;font-weight:600;color:#fab1a0;">PENDIENTE</th>'
+      + '<th style="padding:8px 10px;text-align:center;font-size:12px;font-weight:600;">Cumpl.</th>'
+      + '<th style="padding:8px 10px;text-align:center;font-size:12px;font-weight:600;color:#fab1a0;">Venc.</th>'
+      + '<th style="padding:8px 10px;text-align:center;font-size:12px;font-weight:600;color:#fdcb6e;">Urg.</th>'
+      + '</tr></thead><tbody>';
+    
+    weekDays.forEach(function(date, idx){
+      const stats = porDia[date]||{total:0,hechas:0,planificado:0};
+      const pct = stats.total>0?Math.round(stats.hechas/stats.total*100):0;
+      const pendDia = stats.total - stats.hechas;
+      const dayName = new Date(date+'T12:00:00').toLocaleDateString('es-CL',{weekday:'long',day:'numeric',month:'short'});
+      const isToday = date===todayISO();
+      const bg = isToday?'var(--cyan-light)':idx%2===0?'#fff':'var(--gray-line)';
+      const color = pct>=80?'#27AE60':pct>=50?'var(--cyan)':'#BA7517';
+
+      // Contar vencidas y urgentes del día
+      const vencDia = allOps.filter(o=>o._date===date&&o.estado==='PENDIENTE'&&(o.tier||'').toLowerCase()==='vencido').length;
+      const urgDia = allOps.filter(o=>o._date===date&&o.estado==='PENDIENTE'&&(o.tier||'').toLowerCase()==='urgente').length;
+
+      historicoHTML += '<tr style="background:'+bg+';border-bottom:1px solid var(--gray-line);">'
+        + '<td style="padding:8px 10px;font-size:12px;font-weight:600;color:var(--navy);">'+(isToday?'📍 ':'')+dayName+'</td>'
+        + '<td style="padding:8px 10px;text-align:center;font-size:12px;color:var(--gray-text);">'+(stats.planificado||'-')+'</td>'
+        + '<td style="padding:8px 10px;text-align:center;font-size:12px;color:var(--navy);">'+stats.total+'</td>'
+        + '<td style="padding:8px 10px;text-align:center;font-size:13px;font-weight:700;color:#27AE60;">'+stats.hechas+'</td>'
+        + '<td style="padding:8px 10px;text-align:center;font-size:13px;font-weight:700;color:'+(pendDia>0?'#C0392B':'var(--gray-text)')+';">'+pendDia+'</td>'
+        + '<td style="padding:8px 10px;text-align:center;"><span style="background:'+color+';color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;">'+pct+'%</span></td>'
+        + '<td style="padding:8px 10px;text-align:center;font-size:12px;font-weight:700;color:'+(vencDia>0?'#C0392B':'var(--gray-text)')+';">'+(vencDia>0?vencDia:'-')+'</td>'
+        + '<td style="padding:8px 10px;text-align:center;font-size:12px;font-weight:700;color:'+(urgDia>0?'#BA7517':'var(--gray-text)')+';">'+(urgDia>0?urgDia:'-')+'</td>'
+        + '</tr>';
+    });
+
+    // Fila de totales
+    const totalVenc = pendientesPorTier.vencido;
+    const totalUrg = pendientesPorTier.urgente;
+    historicoHTML += '<tr style="background:var(--navy);font-weight:700;">'
+      + '<td style="padding:8px 10px;font-size:12px;color:#fff;">TOTAL SEMANA</td>'
+      + '<td style="padding:8px 10px;text-align:center;font-size:12px;color:#aaa;">'+(totalPlanificado||'-')+'</td>'
+      + '<td style="padding:8px 10px;text-align:center;font-size:12px;color:#fff;">'+totalSemana+'</td>'
+      + '<td style="padding:8px 10px;text-align:center;font-size:13px;color:#81ecec;">'+hechasSemana+'</td>'
+      + '<td style="padding:8px 10px;text-align:center;font-size:13px;color:#fab1a0;">'+pendientesSemana+'</td>'
+      + '<td style="padding:8px 10px;text-align:center;"><span style="background:'+colorPct+';color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;">'+pctSemana+'%</span></td>'
+      + '<td style="padding:8px 10px;text-align:center;font-size:12px;color:'+(totalVenc>0?'#fab1a0':'#aaa')+';">'+(totalVenc>0?totalVenc:'-')+'</td>'
+      + '<td style="padding:8px 10px;text-align:center;font-size:12px;color:'+(totalUrg>0?'#fdcb6e':'#aaa')+';">'+(totalUrg>0?totalUrg:'-')+'</td>'
+      + '</tr></tbody></table>';
+
+    // Riesgo SLA HTML
+    const slaVencidas = pendientesPorTier.vencido;
+    const slaUrgentes = pendientesPorTier.urgente;
+    const slaNormales = pendientesPorTier.normal;
+    const slaRiesgoColor = slaVencidas>0?'#C0392B':slaUrgentes>0?'#BA7517':'var(--teal)';
+    
+    let prodPendHTML = '';
+    Object.entries(pendientesPorProducto).sort((a,b)=>b[1]-a[1]).forEach(function(item){
+      prodPendHTML += '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--gray-line);">'
+        + '<span style="font-size:13px;color:var(--navy);">'+item[0]+'</span>'
+        + '<span style="font-size:13px;font-weight:700;color:#C0392B;">'+item[1]+' pend.</span></div>';
+    });
+
+    // Dias HTML con planificado
+    let diasHTML2 = '';
+    weekDays.forEach(function(date){
+      const stats = porDia[date]||{total:0,hechas:0,planificado:0};
+      const pct = stats.total>0?Math.round(stats.hechas/stats.total*100):0;
+      const color = pct>=80?'var(--teal)':pct>=50?'var(--cyan)':'var(--amber)';
+      const isToday = date===todayISO();
+      const dayName = new Date(date+'T12:00:00').toLocaleDateString('es-CL',{weekday:'short'});
+      const dayNum = date.slice(8);
+      const planLabel = stats.planificado>0?('<div style="font-size:10px;color:var(--gray-text);">Plan: '+stats.planificado+'</div>'):'';
+      diasHTML2 += '<div style="border:1.5px solid '+(isToday?'var(--navy)':'var(--gray-line)')+';border-radius:10px;padding:10px;text-align:center;background:'+(isToday?'var(--cyan-light)':'#fff')+';"><div style="font-size:11px;font-weight:600;color:var(--gray-text);text-transform:uppercase;">'+dayName+' '+dayNum+'</div><div style="font-size:20px;font-weight:800;color:'+color+';margin:6px 0;">'+pct+'%</div><div style="font-size:11px;color:var(--gray-text);">'+stats.hechas+'/'+stats.total+'</div>'+planLabel+'</div>';
+    });
+
+    body.innerHTML =
+      // KPIs
+      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">'
+      + '<div style="background:var(--cyan-light);border:1.5px solid var(--teal);border-radius:12px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:800;color:var(--navy);">'+(totalPlanificado||totalSemana)+'</div><div style="font-size:11px;color:var(--gray-text);margin-top:4px;">Planificadas semana</div></div>'
+      + '<div style="background:#e8f5e9;border:1.5px solid var(--teal);border-radius:12px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:800;color:var(--teal);">'+hechasSemana+'</div><div style="font-size:11px;color:var(--gray-text);margin-top:4px;">Completadas</div></div>'
+      + '<div style="background:'+kpisBg+';border:1.5px solid '+colorPct+';border-radius:12px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:800;color:'+colorPct+';">'+pctSemana+'%</div><div style="font-size:11px;color:var(--gray-text);margin-top:4px;">Cumplimiento</div></div>'
+      + '<div style="background:'+(slaVencidas>0?'#FCEBEB':'#FAEEDA')+';border:1.5px solid '+slaRiesgoColor+';border-radius:12px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:800;color:'+slaRiesgoColor+';">'+pendientesSemana+'</div><div style="font-size:11px;color:var(--gray-text);margin-top:4px;">Pendientes</div></div>'
+      + '</div>'
+      // Riesgo SLA
+      + '<div style="background:#fff;border:1px solid var(--gray-line);border-radius:12px;padding:16px;">'
+      + '<div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px;">⚠ Riesgo SLA — Pendientes por urgencia</div>'
+      + '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;">'
+      + '<div style="background:#FCEBEB;border:1.5px solid #C0392B;border-radius:10px;padding:12px;text-align:center;"><div style="font-size:22px;font-weight:800;color:#C0392B;">'+slaVencidas+'</div><div style="font-size:11px;color:var(--gray-text);">Vencidas (>48h)</div></div>'
+      + '<div style="background:#FAEEDA;border:1.5px solid #BA7517;border-radius:10px;padding:12px;text-align:center;"><div style="font-size:22px;font-weight:800;color:#BA7517;">'+slaUrgentes+'</div><div style="font-size:11px;color:var(--gray-text);">Urgentes (36-48h)</div></div>'
+      + '<div style="background:var(--cyan-light);border:1.5px solid var(--teal);border-radius:10px;padding:12px;text-align:center;"><div style="font-size:22px;font-weight:800;color:var(--teal);">'+slaNormales+'</div><div style="font-size:11px;color:var(--gray-text);">Normales (<36h)</div></div>'
+      + '</div>'
+      + '<div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:8px;">Por producto:</div>'
+      + prodPendHTML
+      + '</div>'
+      // Avance por analista
+      + '<div style="background:#fff;border:1px solid var(--gray-line);border-radius:12px;padding:16px;">'
+      + '<div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:14px;">Avance por analista — semana</div>'
+      + analistasHTML + '</div>'
+      // Evolución diaria
+      + '<div style="background:#fff;border:1px solid var(--gray-line);border-radius:12px;padding:16px;">'
+      + '<div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:14px;">Evolución diaria</div>'
+      + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;">'
+      + diasHTML2 + '</div></div>'
+      // Histórico semanal por día
+      + '<div style="background:#fff;border:1px solid var(--gray-line);border-radius:12px;padding:16px;">'
+      + '<div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:14px;">Histórico — Detalle por día</div>'
+      + historicoHTML
+      + '</div>';
+
+  }catch(e){
+    body.innerHTML = '<div class="empty">Error al cargar dashboard: '+e.message+'</div>';
+  }
+}
+
 async function loadHistorial(){
   const container=document.getElementById('hist-body');
   container.innerHTML='<div class="loading">Cargando historial...</div>';
