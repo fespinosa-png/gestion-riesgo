@@ -1845,9 +1845,9 @@ function buildProdGrid(){
     <div class="prod-card">
       <div class="pname">${p.name}</div>
       <div class="pmeta">SLA ${p.slaH}h · ${p.idType} · líder ${p.leader}</div>
-      <input type="number" min="0" id="vol-${p.key}" value="${planVols[p.key]?planVols[p.key].total:p.dflt}" oninput="planVols[p.key]=planVols[p.key]||{};planVols[p.key].total=parseInt(this.value)||0;recalcPlan();savePlanVolsFromMemory();">
+      <input type="number" min="0" id="vol-${p.key}" value="${planVols[p.key]?planVols[p.key].total:p.dflt}" oninput="(function(k,v){planVols[k]=planVols[k]||{};planVols[k].total=parseInt(v)||0;recalcPlan();savePlanVolsFromMemory();})(this.id.replace('vol-',''),this.value)">
       <div class="urg-label">Vencen hoy</div>
-      <input type="number" min="0" class="urg" id="urg-${p.key}" value="${planVols[p.key]?planVols[p.key].urgent:0}" oninput="planVols[p.key]=planVols[p.key]||{};planVols[p.key].urgent=parseInt(this.value)||0;recalcPlan();savePlanVolsFromMemory();">
+      <input type="number" min="0" class="urg" id="urg-${p.key}" value="${planVols[p.key]?planVols[p.key].urgent:0}" oninput="(function(k,v){planVols[k]=planVols[k]||{};planVols[k].urgent=parseInt(v)||0;recalcPlan();savePlanVolsFromMemory();})(this.id.replace('urg-',''),this.value)">
     </div>
   `).join('');
 }
