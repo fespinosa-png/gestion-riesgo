@@ -1449,8 +1449,13 @@ var store = {
       if(!data) return {days:[]};
       const days = Object.keys(data).map(date=>{
         let ops=[];
-        try{ ops=typeof data[date]==='string'?JSON.parse(data[date]):(Array.isArray(data[date])?data[date]:[]); }catch(e){}
-        const hechos=ops.filter(o=>o.estado==='HECHO').length;
+        try{
+          const raw = data[date];
+          if(typeof raw==='string') ops=JSON.parse(raw);
+          else if(Array.isArray(raw)) ops=raw;
+          else if(raw && typeof raw==='object') ops=Object.values(raw);
+        }catch(e){ ops=[]; }
+        const hechos=ops.filter(o=>o&&o.estado==='HECHO').length;
         const confirmedBy=ops.length>0?(ops[0].confirmedBy||'--'):'--';
         return {date,total:ops.length,hechos,confirmedBy};
       }).sort((a,b)=>b.date.localeCompare(a.date));
