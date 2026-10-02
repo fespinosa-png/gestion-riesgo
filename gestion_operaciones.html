@@ -402,10 +402,13 @@ tr:last-child td{border-bottom:none;}
       <h2 style="font-size:20px;font-weight:700;color:var(--navy);margin:0 0 4px 0;">Dashboard</h2>
       <div id="dashboard-week-label" style="font-size:13px;color:var(--gray-text);"></div>
     </div>
-    <div style="display:flex;gap:8px;">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
       <button id="db-btn-semana" class="btn-secondary" onclick="setDashPeriod('semana')" style="font-size:12px;padding:6px 14px;font-weight:700;background:var(--navy);color:#fff;border:none;">Esta semana</button>
       <button id="db-btn-4semanas" class="btn-secondary" onclick="setDashPeriod('4semanas')" style="font-size:12px;padding:6px 14px;">4 semanas</button>
       <button id="db-btn-mes" class="btn-secondary" onclick="setDashPeriod('mes')" style="font-size:12px;padding:6px 14px;">Mes actual</button>
+      <select id="db-mes-selector" onchange="setDashPeriod('meselegido')" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;color:var(--navy);background:#fff;cursor:pointer;">
+        <option value="">Elegir mes...</option>
+      </select>
     </div>
   </div>
   <div id="dashboard-body" style="display:flex;flex-direction:column;gap:20px;">
@@ -1665,7 +1668,7 @@ function goTo(tab){
   document.querySelectorAll('.nav-tab')[tabs[tab]].classList.add('active');
   if(tab==='seguimiento') loadSeguimiento();
   if(tab==='historial') loadHistorial();
-  if(tab==='dashboard') loadDashboard();
+  if(tab==='dashboard'){ buildMesSelector(); loadDashboard(); }
   if(tab==='ops'){ ensureTeamReady().then(()=>loadOpsForToday()).then(()=>{ buildOpsEntry(); updateConfirmDateLabel(); updateDraftBadge(); }); }
   if(tab==='miturno') loadMiTurno();
   if(tab==='equipo') renderEquipo();
@@ -2838,6 +2841,23 @@ async function toggleEstado(uid){
 // ─── HISTORIAL PAGE ──────────────────────────────────────────────────────────
 var _dashPeriod = 'semana';
 
+function buildMesSelector(){
+  const sel = document.getElementById('db-mes-selector');
+  if(!sel) return;
+  sel.innerHTML = '<option value="">Elegir mes...</option>';
+  const today = new Date();
+  // Generar últimos 12 meses
+  for(let i=0; i<12; i++){
+    const d = new Date(today.getFullYear(), today.getMonth()-i, 1);
+    const val = d.getFullYear()+'-'+(d.getMonth()+1).toString().padStart(2,'0');
+    const label = d.toLocaleDateString('es-CL',{month:'long',year:'numeric'});
+    const opt = document.createElement('option');
+    opt.value = val;
+    opt.textContent = label.charAt(0).toUpperCase()+label.slice(1);
+    sel.appendChild(opt);
+  }
+}
+
 function setDashPeriod(period){
   _dashPeriod = period;
   // Update button styles
@@ -2851,6 +2871,11 @@ function setDashPeriod(period){
       }
     }
   });
+  // Reset dropdown if not meselegido
+  if(period!=='meselegido'){
+    const sel = document.getElementById('db-mes-selector');
+    if(sel) sel.value='';
+  }
   loadDashboard();
 }
 
@@ -2894,6 +2919,23 @@ async function loadDashboard(){
       }
       const monthName = today.toLocaleDateString('es-CL',{month:'long',year:'numeric'});
       weekLabel.textContent = 'Mes actual: '+monthName+' ('+weekDays.length+' días hábiles)';
+
+    } else if(_dashPeriod === 'meselegido'){
+      // Mes elegido desde selector
+      const sel = document.getElementById('db-mes-selector');
+      const val = sel ? sel.value : '';
+      if(!val){ weekLabel.textContent='Selecciona un mes'; return; }
+      const parts = val.split('-');
+      const year = parseInt(parts[0]), month = parseInt(parts[1])-1;
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month+1, 0);
+      const limitDay = lastDay < today ? lastDay : today;
+      for(let d=new Date(firstDay); d<=limitDay; d.setDate(d.getDate()+1)){
+        const dow = d.getDay();
+        if(dow!==0 && dow!==6) weekDays.push(new Date(d).toISOString().slice(0,10));
+      }
+      const monthName = firstDay.toLocaleDateString('es-CL',{month:'long',year:'numeric'});
+      weekLabel.textContent = monthName.charAt(0).toUpperCase()+monthName.slice(1)+' ('+weekDays.length+' días hábiles)';
     }
 
     // Cargar ops y planificación de todos los días desde Firebase
