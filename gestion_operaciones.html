@@ -2081,7 +2081,7 @@ function buildOpsEntry(){
                   return `<tr style="border-bottom:1px solid var(--gray-line);">
                     <td style="padding:7px 8px;">${p.name} <span class="role-badge ${p.key==='brasil'?'brasil':''}">${p.idType}</span></td>
                     <td style="padding:7px 8px;"><input type="text" value="${op.identificador||''}" placeholder="Se completa después" oninput="updateOp('${op.uid}','identificador',this.value)" style="border:none;border-bottom:1px dashed var(--gray-line);background:transparent;font-size:12px;width:140px;outline:none;padding:1px 2px;"></td>
-                    <td style="padding:7px 8px;"><span class="tier-badge ${op.tier}">${op.tier}</span></td>
+                    <td style="padding:7px 8px;"><select onchange="updateOp('${op.uid}','tier',this.value);buildOpsEntry();" style="font-size:11px;padding:3px 5px;border:1px solid var(--gray-line);border-radius:6px;background:#fff;"><option value="normal" ${op.tier==='normal'?'selected':''}>Normal</option><option value="urgente" ${op.tier==='urgente'?'selected':''}>⚡ Urgente</option><option value="vencido" ${op.tier==='vencido'?'selected':''}>🔴 Vencida</option></select></td>
                     <td style="padding:7px 8px;"><select onchange="updateOp('${op.uid}','analista',this.value);buildOpsEntry();" style="font-size:12px;padding:4px 6px;border:1px solid var(--gray-line);border-radius:6px;"><option value="">Sin asignar</option>${opts}</select></td>
                     <td style="padding:7px 8px;"><button class="rm" onclick="removeOpAndRefresh('${op.uid}')">✕</button></td>
                   </tr>`;
@@ -3142,6 +3142,7 @@ async function loadDashboard(){
       + '</div>'
       + '<div style="margin-top:12px;background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-bar-diario" height="80"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:4px;">EVOLUCIÓN DIARIA</div></div>'
       + '<div style="margin-top:12px;background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-bar-analistas" height="80"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:4px;">CUMPLIMIENTO POR ANALISTA</div></div>'
+      + '<div style="margin-top:12px;background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-donut-plan" height="80"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:4px;">PLANIFICACIÓN POR PRODUCTO</div></div>'
       + '</div>'
       // KPIs
       + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">'
@@ -3242,6 +3243,20 @@ async function loadDashboard(){
           y:{ticks:{color:'#AABBD0',font:{size:10}},grid:{display:false}}
         },plugins:{...chartDefaults.plugins,legend:{display:false},
           tooltip:{callbacks:{label:function(c){return c.parsed.x+'%';}}}}}});
+
+        // 6. Donut planificacion por producto
+        var planVols6={};
+        Object.values(planPorDia).forEach(function(plan){
+          if(plan.vols){ Object.keys(plan.vols).forEach(function(k){ planVols6[k]=(planVols6[k]||0)+parseInt(plan.vols[k].total||0); }); }
+        });
+        if(!Object.keys(planVols6).length && typeof planVols!='undefined'){
+          Object.keys(planVols).forEach(function(k){ if(parseInt(planVols[k].total||0)>0) planVols6[k]=parseInt(planVols[k].total||0); });
+        }
+        var pLabels=Object.keys(planVols6).map(function(k){ return {'leasing':'Leasing Hab.','pie':'Pie Hip.','pv':'Primera Viv.','subsidio':'Subsidio','brasil':'Brasil'}[k]||k; });
+        var ctxPlan=document.getElementById('chart-donut-plan');
+        if(ctxPlan && pLabels.length){
+          new Chart(ctxPlan,{type:'doughnut',data:{labels:pLabels,datasets:[{data:Object.values(planVols6),backgroundColor:[TEAL,CYAN,'#27AE60',AMBER,RED],borderWidth:0}]},options:{...chartDefaults,cutout:'65%',plugins:{...chartDefaults.plugins,legend:{display:true,position:'bottom',labels:{color:'#AABBD0',font:{size:9}}}}}});
+        }
 
       }catch(chartErr){ console.warn('Error en gráficos:', chartErr); }
     }, 100);
