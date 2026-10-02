@@ -198,6 +198,8 @@ tr:last-child td{border-bottom:none;}
   .dup-warning::before{content:"⚠";font-size:12px;}
   .op-row.has-dup input[type=text]{border-color:var(--red);background:var(--red-light);}
 </style>
+  <!-- Chart.js para gráficos del Dashboard -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
   <!-- Firebase Auth -->
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
@@ -3130,8 +3132,19 @@ async function loadDashboard(){
     });
 
     body.innerHTML =
+      // SECCIÓN VISUAL EJECUTIVA
+      '<div style="background:linear-gradient(135deg,#002960 0%,#004a6e 100%);border-radius:14px;padding:18px;margin-bottom:4px;">'
+      + '<div style="font-size:13px;font-weight:700;color:#fff;margin-bottom:14px;letter-spacing:0.5px;">📊 VISTA EJECUTIVA</div>'
+      + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;">'
+      + '<div style="background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-donut-avance" height="160"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:6px;">HECHO vs PENDIENTE</div></div>'
+      + '<div style="background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-donut-urgencia" height="160"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:6px;">PENDIENTES POR URGENCIA</div></div>'
+      + '<div style="background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-donut-producto" height="160"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:6px;">DISTRIBUCIÓN POR PRODUCTO</div></div>'
+      + '</div>'
+      + '<div style="margin-top:12px;background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-bar-diario" height="80"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:4px;">EVOLUCIÓN DIARIA</div></div>'
+      + '<div style="margin-top:12px;background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-bar-analistas" height="80"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:4px;">CUMPLIMIENTO POR ANALISTA</div></div>'
+      + '</div>'
       // KPIs
-      '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">'
+      + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">'
       + '<div style="background:var(--cyan-light);border:1.5px solid var(--teal);border-radius:12px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:800;color:var(--navy);">'+(totalPlanificado||totalSemana)+'</div><div style="font-size:11px;color:var(--gray-text);margin-top:4px;">Planificadas semana</div></div>'
       + '<div style="background:#e8f5e9;border:1.5px solid var(--teal);border-radius:12px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:800;color:var(--teal);">'+hechasSemana+'</div><div style="font-size:11px;color:var(--gray-text);margin-top:4px;">Completadas</div></div>'
       + '<div style="background:'+kpisBg+';border:1.5px solid '+colorPct+';border-radius:12px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:800;color:'+colorPct+';">'+pctSemana+'%</div><div style="font-size:11px;color:var(--gray-text);margin-top:4px;">Cumplimiento</div></div>'
@@ -3162,6 +3175,76 @@ async function loadDashboard(){
       + '<div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:14px;">Histórico — Detalle por día</div>'
       + historicoHTML
       + '</div>';
+
+    // Renderizar gráficos después de que el DOM esté listo
+    setTimeout(function(){
+      try{
+        // Colores
+        const TEAL='#00808F', CYAN='#00CCD1', AMBER='#BA7517', RED='#C0392B', GRAY='#D0D8E0', NAVY='#002960';
+        const chartDefaults = { plugins:{legend:{labels:{color:'#AABBD0',font:{size:11}}}} };
+
+        // 1. Donut HECHO vs PENDIENTE
+        const ctxAvance = document.getElementById('chart-donut-avance');
+        if(ctxAvance) new Chart(ctxAvance,{type:'doughnut',data:{
+          labels:['HECHO','PENDIENTE'],
+          datasets:[{data:[hechasSemana,pendientesSemana],backgroundColor:[TEAL,RED],borderWidth:0}]
+        },options:{...chartDefaults,cutout:'70%',plugins:{...chartDefaults.plugins,
+          legend:{display:true,position:'bottom',labels:{color:'#AABBD0',font:{size:10}}},
+          tooltip:{callbacks:{label:function(c){return c.label+': '+c.parsed+' ('+Math.round(c.parsed/totalSemana*100)+'%)';}}},
+        }}});
+
+        // 2. Donut urgencia pendientes
+        const ctxUrg = document.getElementById('chart-donut-urgencia');
+        if(ctxUrg) new Chart(ctxUrg,{type:'doughnut',data:{
+          labels:['Vencidas','Urgentes','Normales'],
+          datasets:[{data:[pendientesPorTier.vencido,pendientesPorTier.urgente,pendientesPorTier.normal],backgroundColor:[RED,AMBER,TEAL],borderWidth:0}]
+        },options:{...chartDefaults,cutout:'70%',plugins:{...chartDefaults.plugins,
+          legend:{display:true,position:'bottom',labels:{color:'#AABBD0',font:{size:10}}}
+        }}});
+
+        // 3. Donut por producto
+        const prodLabels = Object.keys(pendientesPorProducto);
+        const prodColors = [TEAL,'#00CCD1','#27AE60',AMBER,RED,'#8E44AD'];
+        const ctxProd = document.getElementById('chart-donut-producto');
+        if(ctxProd) new Chart(ctxProd,{type:'doughnut',data:{
+          labels: prodLabels.length ? prodLabels : ['Sin datos'],
+          datasets:[{data: prodLabels.length ? Object.values(pendientesPorProducto) : [1],backgroundColor:prodColors,borderWidth:0}]
+        },options:{...chartDefaults,cutout:'70%',plugins:{...chartDefaults.plugins,
+          legend:{display:true,position:'bottom',labels:{color:'#AABBD0',font:{size:10}}}
+        }}});
+
+        // 4. Barras diarias HECHO/PENDIENTE
+        const diasLabels = weekDays.map(function(d){ return new Date(d+'T12:00:00').toLocaleDateString('es-CL',{weekday:'short',day:'numeric',month:'short'}); });
+        const diasHechas = weekDays.map(function(d){ return (porDia[d]||{hechas:0}).hechas; });
+        const diasPend = weekDays.map(function(d){ const s=porDia[d]||{total:0,hechas:0}; return s.total-s.hechas; });
+        const ctxDiario = document.getElementById('chart-bar-diario');
+        if(ctxDiario) new Chart(ctxDiario,{type:'bar',data:{
+          labels: diasLabels,
+          datasets:[
+            {label:'HECHO',data:diasHechas,backgroundColor:TEAL,borderRadius:4},
+            {label:'PENDIENTE',data:diasPend,backgroundColor:RED,borderRadius:4}
+          ]
+        },options:{...chartDefaults,responsive:true,scales:{
+          x:{stacked:true,ticks:{color:'#AABBD0',font:{size:10}},grid:{display:false}},
+          y:{stacked:true,ticks:{color:'#AABBD0',font:{size:10}},grid:{color:'rgba(255,255,255,0.08)'}}
+        },plugins:{...chartDefaults.plugins,legend:{display:true,position:'top',labels:{color:'#AABBD0',font:{size:10}}}}}});
+
+        // 5. Barras horizontales por analista
+        const analistaNombres = analistas.map(function(a){ return a[0]; });
+        const analistaPcts = analistas.map(function(a){ const s=a[1]; return s.total>0?Math.round(s.hechas/s.total*100):0; });
+        const analistaColors = analistaPcts.map(function(p){ return p>=80?TEAL:p>=50?AMBER:RED; });
+        const ctxAnal = document.getElementById('chart-bar-analistas');
+        if(ctxAnal) new Chart(ctxAnal,{type:'bar',data:{
+          labels: analistaNombres,
+          datasets:[{label:'% Cumplimiento',data:analistaPcts,backgroundColor:analistaColors,borderRadius:4}]
+        },options:{...chartDefaults,indexAxis:'y',responsive:true,scales:{
+          x:{max:100,ticks:{color:'#AABBD0',font:{size:10},callback:function(v){return v+'%';}},grid:{color:'rgba(255,255,255,0.08)'}},
+          y:{ticks:{color:'#AABBD0',font:{size:10}},grid:{display:false}}
+        },plugins:{...chartDefaults.plugins,legend:{display:false},
+          tooltip:{callbacks:{label:function(c){return c.parsed.x+'%';}}}}}});
+
+      }catch(chartErr){ console.warn('Error en gráficos:', chartErr); }
+    }, 100);
 
   }catch(e){
     body.innerHTML = '<div class="empty">Error al cargar dashboard: '+e.message+'</div>';
