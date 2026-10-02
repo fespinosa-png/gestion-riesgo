@@ -3180,6 +3180,8 @@ async function loadDashboard(){
     // Renderizar gráficos después de que el DOM esté listo
     setTimeout(function(){
       try{
+        // Destruir gráficos anteriores antes de recrear
+        Object.keys(Chart.instances||{}).forEach(function(k){ try{ Chart.instances[k].destroy(); }catch(e){} });
         // Colores
         const TEAL='#00808F', CYAN='#00CCD1', AMBER='#BA7517', RED='#C0392B', GRAY='#D0D8E0', NAVY='#002960';
         const chartDefaults = { plugins:{legend:{labels:{color:'#AABBD0',font:{size:11}}}} };
