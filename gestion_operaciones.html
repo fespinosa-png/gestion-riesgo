@@ -816,7 +816,8 @@ function handleRequest(params) {
           tier:           tier,
           fecha_envio:    (row[colIdx['Fecha_Envio']] || '').toString(),
           analista_actual:(row[colIdx['Analista_Riesgo']] || '').toString(),
-          categoria_sla:  (row[colIdx['Categoria_SLA']] || 'Inmediata').toString()
+          categoria_sla:  (row[colIdx['Categoria_SLA']] || 'Inmediata').toString(),
+          derivar_ivan:   (row[colIdx['derivar_operacion_IVAN']] || '').toString().trim().toUpperCase() === 'TRUE'
         });
       }
       var tierOrder = {vencido:0, urgente:1, normal:2};
@@ -2459,6 +2460,7 @@ async function cargarDesdeMaestro(){
         _id_operacion: op.id_operacion,
         _horas_habiles: op.horas_habiles,
         _categoria_sla: op.categoria_sla || 'Inmediata',
+        _derivar_ivan: op.derivar_ivan || false,
         _needs_review: needsReview  // requiere revisión manual de asignación
       };
       dayOps.push(newOp);
@@ -2481,6 +2483,7 @@ async function cargarDesdeMaestro(){
       (urgentes ? ' · <span style="color:var(--amber);font-weight:600;">' + urgentes + ' urgentes</span>' : '') +
       '<br><span style="color:var(--teal);">🔷 Inmediata: ' + inmediatas + '</span>' +
       ' · <span style="color:var(--amber);">🔶 Pre Aprobación: ' + preAprobadas + '</span>' +
+      (dayOps.filter(function(o){return o._derivar_ivan;}).length ? ' · <span style="color:#8E44AD;font-weight:600;">🏷 Derivadas a Iván: ' + dayOps.filter(function(o){return o._derivar_ivan;}).length + '</span>' : '') +
       '. Revisa la asignación y confirma.';
 
   } catch(e){
@@ -2795,13 +2798,18 @@ function renderSeguimiento(){
         ${op.identificador||'--'}
         ${op._isDup?'<div class="dup-warning"> Repetido</div>':''}
         ${op._needs_review?'<div style="font-size:10px;color:var(--magenta);font-weight:700;">⚠ Revisar asignacion</div>':''}
+        ${op._derivar_ivan?'<div style="font-size:10px;font-weight:700;color:#8E44AD;">🏷 Derivar → Iván</div>':''}
         ${op._categoria_sla?`<span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:${(op._categoria_sla||'').includes('Pre')?'#FFF3CD':'#E0F3F5'};color:${(op._categoria_sla||'').includes('Pre')?'#BA7517':'#00808F'}">${(op._categoria_sla||'').includes('Pre')?'🔶 Pre Apr.':'🔷 Inm.'}</span>`:''}
       </td>
       <td><div class="analyst-name" style="font-size:13px;">${op.analista||'--'}</div></td>
       <td><select onchange="updateOp('${op.uid}','tier',this.value);buildOpsEntry();" style="font-size:11px;padding:3px 5px;border:1px solid var(--gray-line);border-radius:6px;background:#fff;cursor:pointer;"><option value="normal" ${op.tier==='normal'?'selected':''}>Normal</option><option value="urgente" ${op.tier==='urgente'?'selected':''}>⚡ Urgente</option><option value="vencido" ${op.tier==='vencido'?'selected':''}>🔴 Vencida</option></select></td>
       ${calcSLACell(op)}
       <td>${estadoBtn}</td>
-      <td class="breakdown">${op.estado==='HECHO'?fmtTime(op.completado_en):'--'}</td>
+      <td class="breakdown">
+        ${op.estado==='HECHO'?fmtTime(op.completado_en):'--'}
+        ${op._resultado?'<div style="font-size:10px;margin-top:3px;"><span style="font-weight:700;color:'+(op._resultado.tipo==='aprobada'?'#27AE60':op._resultado.tipo==='rechazada'?'var(--red)':'var(--amber)')+';">'+(op._resultado.tipo==='aprobada'?'✅ Aprobada':op._resultado.tipo==='rechazada'?'❌ Rechazada':'🔄 Devuelta')+'</span>'+(op._resultado.motivo?'<br><span style="color:var(--gray-text);">'+op._resultado.motivo+'</span>':'')+'</div>':''}
+        <button onclick="renderResultadoModal('${op.uid}')" style="font-size:10px;padding:2px 8px;border:1px solid var(--gray-line);border-radius:6px;background:#fff;cursor:pointer;margin-top:4px;">${op._resultado?'✏ Editar':'+ Resultado'}</button>
+      </td>
       <td style="min-width:160px;">
         <textarea class="obs-field" rows="1"
           placeholder="Agregar observación..."
@@ -2848,6 +2856,134 @@ async function toggleEstado(uid){
 }
 
 // ─── HISTORIAL PAGE ──────────────────────────────────────────────────────────
+
+// ── Catálogo de motivos de devolución y rechazo ──────────────────────────
+const MOTIVOS_DEVOLUCION = [
+  {grupo:'Documentación', motivos:[
+    'Faltan liquidaciones actualizadas',
+    'Falta certificado de AFP o AFP desactualizada',
+    'Documentación con inconsistencias a validar',
+    'Se requieren cartolas de cuenta corriente',
+    'Carpeta tributaria desactualizada o incompleta'
+  ]},
+  {grupo:'Riesgo del cliente', motivos:[
+    'Dicom vigente, deudas vencidas, morosas o castigadas en SBIF',
+    'Score en los últimos 6 meses bajo el mínimo permitido',
+    'No cumple antigüedad / continuidad laboral mínima',
+    'Cliente socio mayoritario de empresa (requiere documentación adicional)',
+    'Empleador con vínculo familiar o parentesco (requiere acreditación especial)',
+    'Cliente o codeudor de Fuerzas de Seguridad y Orden (requiere liquidación especial)'
+  ]},
+  {grupo:'Cumplimiento', motivos:[
+    'Alerta Gesintel enviada a Compliance — pendiente resolución',
+    'Se requiere mayor información del origen de fondos'
+  ]}
+];
+
+const MOTIVOS_RECHAZO = [
+  {grupo:'Riesgo crediticio', motivos:[
+    'No recomendado por Compliance',
+    'Inconsistencias graves en revisión de antecedentes laborales',
+    'Cliente o codeudor con empleador familiar que no logra acreditar ingresos',
+    'Deuda consolidada supera capacidad de pago (DFL excedido)',
+    'Historial de morosidad recurrente o castigos en el sistema financiero',
+    'Score definitivamente bajo el mínimo de política'
+  ]},
+  {grupo:'Riesgo empresa / empleador', motivos:[
+    'Empresa sin utilidades — Leasing y Pie Hipotecario Chile',
+    'Empresa con menos de 2 años de antigüedad',
+    'Empleador no verificable o informal'
+  ]},
+  {grupo:'Política', motivos:[
+    'Operación fuera de rango de monto permitido por política',
+    'Edad del titular excede límite de la política al término del crédito',
+    'Producto no disponible para el segmento del cliente'
+  ]}
+];
+
+function buildMotivoOptions(lista){
+  let html = '<option value="">-- Seleccionar motivo --</option>';
+  lista.forEach(function(g){
+    html += '<optgroup label="'+g.grupo+'">';
+    g.motivos.forEach(function(m){ html += '<option value="'+m+'">'+m+'</option>'; });
+    html += '</optgroup>';
+  });
+  return html;
+}
+
+function renderResultadoModal(uid){
+  const op = seguimientoOps.find(o=>o.uid===uid);
+  if(!op) return;
+  let existing = op._resultado || {};
+  
+  const modalHtml = '<div id="resultado-modal-bg" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;">'
+    + '<div style="background:#fff;border-radius:14px;padding:24px;width:480px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,41,0.25);">'
+    + '<div style="font-size:16px;font-weight:700;color:var(--navy);margin-bottom:16px;">Resultado de la operación</div>'
+    + '<div style="font-size:12px;color:var(--gray-text);margin-bottom:12px;">RUT: '+op.identificador+' | '+op.productName+'</div>'
+    // Resultado
+    + '<div style="margin-bottom:14px;">'
+    + '<label style="font-size:12px;font-weight:600;color:var(--navy);display:block;margin-bottom:6px;">Resultado</label>'
+    + '<select id="res-tipo" onchange="toggleMotivoPanel()" style="width:100%;padding:8px 10px;border:1px solid var(--gray-line);border-radius:8px;font-size:13px;">'
+    + '<option value="">-- Seleccionar --</option>'
+    + '<option value="aprobada" '+(existing.tipo==='aprobada'?'selected':'')+'>✅ Aprobada</option>'
+    + '<option value="devuelta" '+(existing.tipo==='devuelta'?'selected':'')+'>🔄 Devuelta</option>'
+    + '<option value="rechazada" '+(existing.tipo==='rechazada'?'selected':'')+'>❌ Rechazada</option>'
+    + '</select></div>'
+    // Motivo (se muestra solo si devuelta o rechazada)
+    + '<div id="panel-motivo" style="margin-bottom:14px;display:'+(existing.tipo&&existing.tipo!=='aprobada'?'block':'none')+'">'
+    + '<label style="font-size:12px;font-weight:600;color:var(--navy);display:block;margin-bottom:6px;">Motivo</label>'
+    + '<select id="res-motivo" style="width:100%;padding:8px 10px;border:1px solid var(--gray-line);border-radius:8px;font-size:12px;">'
+    + buildMotivoOptions(existing.tipo==='rechazada'?MOTIVOS_RECHAZO:MOTIVOS_DEVOLUCION)
+    + '</select></div>'
+    // Observación
+    + '<div style="margin-bottom:16px;">'
+    + '<label style="font-size:12px;font-weight:600;color:var(--navy);display:block;margin-bottom:6px;">Observación adicional (opcional)</label>'
+    + '<textarea id="res-obs" style="width:100%;padding:8px 10px;border:1px solid var(--gray-line);border-radius:8px;font-size:12px;height:70px;resize:none;" placeholder="Detalles adicionales...">'+(existing.obs||'')+'</textarea></div>'
+    // Botones
+    + '<div style="display:flex;gap:10px;justify-content:flex-end;">'
+    + '<button onclick="cerrarResultadoModal()" style="padding:8px 16px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;font-size:13px;cursor:pointer;">Cancelar</button>'
+    + '<button onclick="guardarResultado(\"'+uid+'\")" style="padding:8px 20px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-size:13px;font-weight:700;cursor:pointer;">Guardar</button>'
+    + '</div></div></div>';
+  
+  // Set pre-selected motivo
+  const existing_motivo = existing.motivo||'';
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+  if(existing_motivo){ const sel=document.getElementById('res-motivo'); if(sel) sel.value=existing_motivo; }
+}
+
+function cerrarResultadoModal(){ var el=document.getElementById("resultado-modal-bg"); if(el) el.remove(); }
+
+function toggleMotivoPanel(){
+  const tipo = document.getElementById('res-tipo').value;
+  const panel = document.getElementById('panel-motivo');
+  const sel = document.getElementById('res-motivo');
+  if(!panel||!sel) return;
+  if(tipo==='devuelta'||tipo==='rechazada'){
+    panel.style.display='block';
+    sel.innerHTML = buildMotivoOptions(tipo==='rechazada'?MOTIVOS_RECHAZO:MOTIVOS_DEVOLUCION);
+  } else {
+    panel.style.display='none';
+  }
+}
+
+async function guardarResultado(uid){
+  const tipo = document.getElementById('res-tipo').value;
+  const motivo = document.getElementById('res-motivo')?.value||'';
+  const obs = document.getElementById('res-obs')?.value||'';
+  if(!tipo){ alert('Selecciona un resultado'); return; }
+  if((tipo==='devuelta'||tipo==='rechazada')&&!motivo){ alert('Selecciona un motivo'); return; }
+  
+  const op = seguimientoOps.find(o=>o.uid===uid);
+  if(op){
+    op._resultado = {tipo, motivo, obs, fecha: new Date().toISOString()};
+    saveLocalBackup(seguimientoOps);
+    try{ await store.markEstado(uid, op.estado, op.completado_en, op._resultado); }catch(e){}
+  }
+  document.getElementById('resultado-modal-bg')?.remove();
+  renderSeguimiento();
+}
+
+
 var _dashPeriod = 'semana';
 
 function buildMesSelector(){
