@@ -790,35 +790,62 @@ function handleRequest(params) {
       var masterSS = SpreadsheetApp.openById(SHEET_MHE_ID);
       var masterSheet = masterSS.getSheetByName(SHEET_MHE_NAME_1) || masterSS.getSheetByName(SHEET_MHE_NAME_2);
       if (!masterSheet) return {error: 'No se encontro la pestana SABANA_MAESTRA'};
-      var mData = masterSheet.getDataRange().getValues();
-      var headers = mData[0];
+      // Leer solo columnas necesarias para optimizar velocidad
+      var lastRow = masterSheet.getLastRow();
+      var lastCol = masterSheet.getLastColumn();
+      var headers = masterSheet.getRange(1, 1, 1, lastCol).getValues()[0];
       var colIdx = {};
       headers.forEach(function(h, i){ colIdx[h] = i; });
       var required = ['ID_Operacion','RUT_Titular','Segmento_SLA','Resolucion_Riesgo','Horas_Habiles','Fecha_Envio','Analista_Riesgo'];
       for (var r = 0; r &lt; required.length; r++) {
         if (colIdx[required[r]] === undefined) return {error: 'Columna no encontrada: ' + required[r]};
       }
-      var productos = ['Primera Vivienda', 'Subsidio'];
+      // Leer solo las columnas necesarias (no todo el sheet)
+      var needCols = ['ID_Operacion','RUT_Titular','Segmento_SLA','Resolucion_Riesgo','Horas_Habiles',
+                      'Fecha_Envio','Analista_Riesgo','Categoria_SLA','derivar_operacion_IVAN'];
+      var colNums = needCols.map(function(c){ return colIdx[c] !== undefined ? colIdx[c]+1 : null; });
+      // Leer todas las filas en bloques de 2000 para evitar timeout
       var ops = [];
-      for (var i = 1; i &lt; mData.length; i++) {
-        var row = mData[i];
-        var resolucion = (row[colIdx['Resolucion_Riesgo']] || '').toString().trim();
-        var segmento = (row[colIdx['Segmento_SLA']] || '').toString().trim();
-        if (resolucion !== 'Pendiente') continue;
-        if (productos.indexOf(segmento) === -1) continue;
-        var horas = parseFloat(row[colIdx['Horas_Habiles']]) || 0;
-        var tier = horas &gt;= 48 ? 'vencido' : (horas &gt;= 36 ? 'urgente' : 'normal');
-        ops.push({
-          id_operacion:   (row[colIdx['ID_Operacion']] || '').toString(),
-          rut:            (row[colIdx['RUT_Titular']] || '').toString(),
-          segmento:       segmento,
-          horas_habiles:  horas,
-          tier:           tier,
-          fecha_envio:    (row[colIdx['Fecha_Envio']] || '').toString(),
-          analista_actual:(row[colIdx['Analista_Riesgo']] || '').toString(),
-          categoria_sla:  (row[colIdx['Categoria_SLA']] || 'Inmediata').toString(),
-          derivar_ivan:   (row[colIdx['derivar_operacion_IVAN']] || '').toString().trim().toUpperCase() === 'TRUE'
-        });
+      var BLOCK = 2000;
+      for (var start = 2; start &lt;= lastRow; start += BLOCK) {
+        var end = Math.min(start + BLOCK - 1, lastRow);
+        var block = masterSheet.getRange(start, 1, end - start + 1, lastCol).getValues();
+        for (var i = 0; i &lt; block.length; i++) {
+          var row = block[i];
+          // Filtro 1: Pendiente
+          var resolucion = (row[colIdx['Resolucion_Riesgo']] || '').toString().trim();
+          if (resolucion !== 'Pendiente') continue;
+          // Filtro 2: En_Agente_IA = TRUE
+          var en_agente = (row[colIdx['En_Agente_IA']] || '').toString().trim().toUpperCase();
+          if (en_agente !== 'TRUE') continue;
+          // Filtro 3: oferta_valida_deudor = TRUE
+          var oferta_d = (row[colIdx['oferta_valida_deudor']] || '').toString().trim().toUpperCase();
+          if (oferta_d !== 'TRUE') continue;
+          // Filtro 4: oferta_valida_codeudor = TRUE o vacío
+          var oferta_c = (row[colIdx['oferta_valida_codeudor']] || '').toString().trim().toUpperCase();
+          if (oferta_c !== 'TRUE' &amp;&amp; oferta_c !== '' &amp;&amp; oferta_c !== 'NO_APLICA') continue;
+          // Filtro 5: paso_por_ia = TRUE
+          var paso_ia = (row[colIdx['paso_por_ia']] || '').toString().trim().toUpperCase();
+          if (paso_ia !== 'TRUE') continue;
+          // Filtro 6: derivar_operacion_IVAN = TRUE
+          var derivar = (row[colIdx['derivar_operacion_IVAN']] || '').toString().trim().toUpperCase();
+          if (derivar !== 'TRUE') continue;
+          // Pasó todos los filtros — agregar
+          var segmento = (row[colIdx['Segmento_SLA']] || '').toString().trim();
+          var horas = parseFloat(row[colIdx['Horas_Habiles']]) || 0;
+          var tier = horas &gt;= 48 ? 'vencido' : (horas &gt;= 36 ? 'urgente' : 'normal');
+          ops.push({
+            id_operacion:   (row[colIdx['ID_Operacion']] || '').toString(),
+            rut:            (row[colIdx['RUT_Titular']] || '').toString(),
+            segmento:       segmento,
+            horas_habiles:  horas,
+            tier:           tier,
+            fecha_envio:    (row[colIdx['Fecha_Envio']] || '').toString(),
+            analista_actual:(row[colIdx['Analista_Riesgo']] || '').toString(),
+            categoria_sla:  (row[colIdx['Categoria_SLA']] || 'Inmediata').toString(),
+            derivar_ivan:   true
+          });
+        }
       }
       var tierOrder = {vencido:0, urgente:1, normal:2};
       ops.sort(function(a,b){ return tierOrder[a.tier] - tierOrder[b.tier]; });
