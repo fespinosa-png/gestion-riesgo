@@ -3309,6 +3309,83 @@ async function loadDashboard(){
       + '</div>'
     ) : '';
 
+    // Tiempo de resolución por analista
+    var tiempoAnalista = {};
+    var tiempoIvanNormal = []; // ops SIN derivar_ivan
+    var tiempoIvanDeriv = [];  // ops CON derivar_ivan
+
+    allOps.forEach(function(op){
+      if(op.estado!=='HECHO' || !op.asignado_en || !op.completado_en) return;
+      var inicio = new Date(op.asignado_en).getTime();
+      var fin = new Date(op.completado_en).getTime();
+      if(isNaN(inicio)||isNaN(fin)||fin<=inicio) return;
+      var mins = Math.round((fin-inicio)/60000);
+      if(mins<=0 || mins>480) return; // descartar outliers >8h o negativos
+
+      var a = op.analista||'Sin asignar';
+      if(!tiempoAnalista[a]) tiempoAnalista[a]={total:0,count:0,min:Infinity,max:0};
+      tiempoAnalista[a].total+=mins;
+      tiempoAnalista[a].count++;
+      if(mins<tiempoAnalista[a].min) tiempoAnalista[a].min=mins;
+      if(mins>tiempoAnalista[a].max) tiempoAnalista[a].max=mins;
+
+      if(op._derivar_ivan) tiempoIvanDeriv.push(mins);
+      else tiempoIvanNormal.push(mins);
+    });
+
+    function avgArr(arr){ return arr.length?Math.round(arr.reduce(function(a,b){return a+b;},0)/arr.length):null; }
+    function fmtMins(m){ if(!m&&m!==0) return '--'; if(m<60) return m+'min'; return Math.floor(m/60)+'h '+('0'+m%60).slice(-2)+'min'; }
+
+    var analistas_tiempo = Object.entries(tiempoAnalista)
+      .filter(function(e){ return e[0]!=='Sin asignar' && e[1].count>0; })
+      .sort(function(a,b){ return (a[1].total/a[1].count)-(b[1].total/b[1].count); });
+
+    var avgNormal = avgArr(tiempoIvanNormal);
+    var avgIvanDeriv = avgArr(tiempoIvanDeriv);
+    var diffPct = avgNormal&&avgIvanDeriv ? Math.round((avgIvanDeriv-avgNormal)/avgNormal*100) : null;
+
+    var tablaFilas = analistas_tiempo.map(function(entry){
+      var nombre=entry[0], d=entry[1];
+      var avg=Math.round(d.total/d.count);
+      var color=avg<=30?'#27AE60':avg<=60?'#BA7517':'#C0392B';
+      return '<tr style="border-bottom:1px solid var(--gray-line);">'
+        +'<td style="padding:8px 10px;font-size:13px;font-weight:600;color:var(--navy);">'+nombre+'</td>'
+        +'<td style="padding:8px 10px;text-align:center;"><span style="font-size:13px;font-weight:700;color:'+color+';">'+fmtMins(avg)+'</span></td>'
+        +'<td style="padding:8px 10px;text-align:center;font-size:12px;color:#27AE60;">'+fmtMins(d.min)+'</td>'
+        +'<td style="padding:8px 10px;text-align:center;font-size:12px;color:#C0392B;">'+fmtMins(d.max)+'</td>'
+        +'<td style="padding:8px 10px;text-align:center;font-size:12px;color:var(--gray-text);">'+d.count+' ops</td>'
+        +'</tr>';
+    }).join('');
+
+    var ivanCompHTML = '';
+    if(avgNormal!==null && avgIvanDeriv!==null){
+      var diffColor = diffPct<0?'#27AE60':diffPct>10?'#C0392B':'#BA7517';
+      var diffText = diffPct<0?'⬇ '+Math.abs(diffPct)+'% más rápidas':'⬆ '+Math.abs(diffPct)+'% más lentas';
+      ivanCompHTML = '<div style="margin-top:14px;background:var(--cyan-light);border:1.5px solid var(--teal);border-radius:10px;padding:14px;">'
+        +'<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px;">🏷 Comparativa: ops normales vs derivadas de Iván IA</div>'
+        +'<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">'
+        +'<div style="text-align:center;"><div style="font-size:18px;font-weight:800;color:var(--navy);">'+fmtMins(avgNormal)+'</div><div style="font-size:11px;color:var(--gray-text);">Promedio ops normales</div></div>'
+        +'<div style="text-align:center;"><div style="font-size:18px;font-weight:800;color:#8E44AD;">'+fmtMins(avgIvanDeriv)+'</div><div style="font-size:11px;color:var(--gray-text);">Promedio ops Iván IA</div></div>'
+        +'<div style="text-align:center;"><div style="font-size:18px;font-weight:800;color:'+diffColor+';">'+diffText+'</div><div style="font-size:11px;color:var(--gray-text);">Diferencia</div></div>'
+        +'</div></div>';
+    }
+
+    var tiempoHTML = analistas_tiempo.length>0 ? (
+      '<div style="background:#fff;border:1px solid var(--gray-line);border-radius:12px;padding:16px;">'
+      +'<div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:4px;">⏱ Tiempo de resolución por analista</div>'
+      +'<div style="font-size:12px;color:var(--gray-text);margin-bottom:14px;">Desde asignación hasta HECHO · Verde ≤30min · Ámbar ≤60min · Rojo >60min</div>'
+      +'<table style="width:100%;border-collapse:collapse;">'
+      +'<thead><tr style="background:var(--navy);color:#fff;">'
+      +'<th style="padding:8px 10px;text-align:left;font-size:12px;">Analista</th>'
+      +'<th style="padding:8px 10px;text-align:center;font-size:12px;">Promedio</th>'
+      +'<th style="padding:8px 10px;text-align:center;font-size:12px;">Más rápida</th>'
+      +'<th style="padding:8px 10px;text-align:center;font-size:12px;">Más lenta</th>'
+      +'<th style="padding:8px 10px;text-align:center;font-size:12px;">Ops</th>'
+      +'</tr></thead><tbody>'+tablaFilas+'</tbody></table>'
+      + ivanCompHTML
+      +'</div>'
+    ) : '';
+
     // Riesgo SLA HTML
     const slaVencidas = pendientesPorTier.vencido;
     const slaUrgentes = pendientesPorTier.urgente;
@@ -3383,7 +3460,9 @@ async function loadDashboard(){
       // RESULTADOS
       + resultadosHTML
       // IVAN
-      + ivanHTML;
+      + ivanHTML
+      // TIEMPO DE RESOLUCIÓN
+      + tiempoHTML;
 
     // Renderizar gráficos después de que el DOM esté listo
     setTimeout(function(){
