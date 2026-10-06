@@ -199,7 +199,8 @@ tr:last-child td{border-bottom:none;}
   .op-row.has-dup input[type=text]{border-color:var(--red);background:var(--red-light);}
 </style>
   <!-- pptxgenjs para exportar PPT del Dashboard -->
-  <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+  <!-- SheetJS para exportar Excel del Dashboard -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <!-- Chart.js para gráficos del Dashboard -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
   <!-- html2canvas y jsPDF para exportar Dashboard -->
@@ -413,7 +414,7 @@ tr:last-child td{border-bottom:none;}
       <select id="db-filter-analista" onchange="loadDashboard()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;color:var(--navy);background:#fff;">
         <option value="">👥 Todos los analistas</option>
       </select>
-      <button onclick="exportDashboardPPT()" style="font-size:12px;padding:6px 14px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;cursor:pointer;">📊 Exportar PPT</button>
+      <button onclick="exportDashboardExcel()" style="font-size:12px;padding:6px 14px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;cursor:pointer;">📥 Exportar Excel</button>
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
       <button id="db-btn-semana" class="btn-secondary" onclick="setDashPeriod('semana')" style="font-size:12px;padding:6px 14px;font-weight:700;background:var(--navy);color:#fff;border:none;">Esta semana</button>
@@ -3114,6 +3115,129 @@ function buildAnalistaFilter(){
     if(t.name === current) opt.selected = true;
     sel.appendChild(opt);
   });
+}
+
+async function exportDashboardExcel(){
+  const label = document.getElementById('dashboard-week-label').textContent;
+  const btn = document.querySelector('[onclick="exportDashboardExcel()"]');
+  if(btn){ btn.textContent='⏳ Generando...'; btn.disabled=true; }
+
+  try{
+    const XLSX = window.XLSX;
+    const wb = XLSX.utils.book_new();
+    const dashBody = document.getElementById('dashboard-body');
+
+    // ── HOJA 1: RESUMEN KPIs ─────────────────────────────────────────────
+    const kpiData = [
+      ['DASHBOARD RIESGO ORIGINACIÓN — CREDITÚ'],
+      ['Período:', label],
+      ['Exportado:', new Date().toLocaleString('es-CL')],
+      [],
+      ['KPIs PRINCIPALES'],
+    ];
+    const kpiCells = dashBody.querySelectorAll('[style*="text-align:center"][style*="border-radius:12px"]');
+    kpiCells.forEach(function(cell){
+      const valEl = cell.querySelector('[style*="font-size:24px"],[style*="font-size:28px"]');
+      const lblEl = cell.querySelector('[style*="font-size:11px"],[style*="font-size:12px"]');
+      if(valEl && lblEl) kpiData.push([lblEl.textContent.trim(), valEl.textContent.trim()]);
+    });
+
+    const wsKPI = XLSX.utils.aoa_to_sheet(kpiData);
+    wsKPI['!cols'] = [{wch:35},{wch:20}];
+    XLSX.utils.book_append_sheet(wb, wsKPI, 'Resumen');
+
+    // ── HOJA 2: HISTÓRICO DIARIO ─────────────────────────────────────────
+    const histTable = dashBody.querySelector('table');
+    if(histTable){
+      const histData = [];
+      histTable.querySelectorAll('tr').forEach(function(tr){
+        const row = [];
+        tr.querySelectorAll('th,td').forEach(function(cell){ row.push(cell.textContent.trim()); });
+        if(row.some(function(c){ return c; })) histData.push(row);
+      });
+      if(histData.length > 1){
+        const wsHist = XLSX.utils.aoa_to_sheet(histData);
+        wsHist['!cols'] = [{wch:18},{wch:14},{wch:12},{wch:10},{wch:12},{wch:10},{wch:10},{wch:10},{wch:10}];
+        XLSX.utils.book_append_sheet(wb, wsHist, 'Histórico Diario');
+      }
+    }
+
+    // ── HOJA 3: AVANCE POR ANALISTA ──────────────────────────────────────
+    const analSection = Array.from(dashBody.querySelectorAll('[style*="font-size:15px"][style*="font-weight:700"]'))
+      .find(function(el){ return el.textContent.includes('Avance por analista'); });
+    if(analSection){
+      const analData = [['Analista','Completadas','Total','% Cumplimiento']];
+      const parent = analSection.parentElement;
+      parent.querySelectorAll('[style*="margin-bottom:14px"]').forEach(function(item){
+        const nombre = item.querySelector('[style*="font-weight:600"]');
+        const stats = item.querySelector('[style*="font-size:12px"][style*="color"]');
+        if(nombre && stats){
+          const txt = stats.textContent.trim();
+          const match = txt.match(/(\d+)\/(\d+)\s*\((\d+)%\)/);
+          if(match) analData.push([nombre.textContent.trim(), parseInt(match[1]), parseInt(match[2]), parseInt(match[3])+'%']);
+        }
+      });
+      if(analData.length > 1){
+        const wsAnal = XLSX.utils.aoa_to_sheet(analData);
+        wsAnal['!cols'] = [{wch:16},{wch:14},{wch:10},{wch:16}];
+        XLSX.utils.book_append_sheet(wb, wsAnal, 'Avance Analistas');
+      }
+    }
+
+    // ── HOJA 4: TIEMPO DE RESOLUCIÓN ─────────────────────────────────────
+    const tiempoSection = Array.from(dashBody.querySelectorAll('[style*="font-size:15px"]'))
+      .find(function(el){ return el.textContent.includes('Tiempo de resolución'); });
+    if(tiempoSection){
+      const tiempoTable = tiempoSection.parentElement.querySelector('table');
+      if(tiempoTable){
+        const tData = [];
+        tiempoTable.querySelectorAll('tr').forEach(function(tr){
+          const row = [];
+          tr.querySelectorAll('th,td').forEach(function(cell){ row.push(cell.textContent.trim()); });
+          if(row.some(function(c){ return c; })) tData.push(row);
+        });
+        if(tData.length > 1){
+          const wsTiempo = XLSX.utils.aoa_to_sheet(tData);
+          wsTiempo['!cols'] = [{wch:18},{wch:14},{wch:14},{wch:14},{wch:10}];
+          XLSX.utils.book_append_sheet(wb, wsTiempo, 'Tiempos Resolución');
+        }
+      }
+    }
+
+    // ── HOJA 5: RIESGO SLA ────────────────────────────────────────────────
+    const slaSection = Array.from(dashBody.querySelectorAll('[style*="font-size:15px"]'))
+      .find(function(el){ return el.textContent.includes('Riesgo SLA'); });
+    if(slaSection){
+      const slaData = [['Tipo','Cantidad']];
+      const slaParent = slaSection.parentElement;
+      slaParent.querySelectorAll('[style*="border-radius:10px"][style*="text-align:center"]').forEach(function(cell){
+        const valEl = cell.querySelector('[style*="font-size:22px"]');
+        const lblEl = cell.querySelector('[style*="font-size:11px"]');
+        if(valEl && lblEl) slaData.push([lblEl.textContent.trim(), valEl.textContent.trim()]);
+      });
+      const prodSection = slaParent.querySelectorAll('[style*="justify-content:space-between"]');
+      prodSection.forEach(function(row){
+        const prod = row.querySelector('span:first-child');
+        const cant = row.querySelector('span:last-child');
+        if(prod && cant) slaData.push([prod.textContent.trim(), cant.textContent.trim()]);
+      });
+      if(slaData.length > 1){
+        const wsSLA = XLSX.utils.aoa_to_sheet(slaData);
+        wsSLA['!cols'] = [{wch:30},{wch:14}];
+        XLSX.utils.book_append_sheet(wb, wsSLA, 'Riesgo SLA');
+      }
+    }
+
+    // Descargar
+    const filename = 'Dashboard_Creditu_'+new Date().toISOString().slice(0,10)+'.xlsx';
+    XLSX.writeFile(wb, filename);
+
+  }catch(e){
+    console.error('Excel error:', e);
+    alert('Error al generar Excel: '+e.message);
+  }finally{
+    if(btn){ btn.textContent='📥 Exportar Excel'; btn.disabled=false; }
+  }
 }
 
 async function exportDashboardPPT(){
