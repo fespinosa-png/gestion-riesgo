@@ -3142,12 +3142,17 @@ async function exportDashboardPDF(){
     pdf.text(label, pageW-margin, 14, {align:'right'});
     pdf.text('Exportado: '+new Date().toLocaleString('es-CL'), pageW-margin, 8, {align:'right'});
 
+    // Esperar a que los gráficos terminen de renderizar
+    await new Promise(function(resolve){ setTimeout(resolve, 1500); });
+
     // Capture dashboard body as image
     const canvas = await html2canvas(body, {
       scale: 1.5,
       useCORS: true,
       backgroundColor: '#F4F5F7',
       logging: false,
+      allowTaint: true,
+      foreignObjectRendering: false,
       ignoreElements: function(el){ return el.tagName==='BUTTON'; }
     });
 
