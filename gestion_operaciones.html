@@ -411,6 +411,9 @@ tr:last-child td{border-bottom:none;}
       <select id="db-mes-selector" onchange="setDashPeriod('meselegido')" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;color:var(--navy);background:#fff;cursor:pointer;">
         <option value="">Elegir mes...</option>
       </select>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--navy);cursor:pointer;">
+        <input type="checkbox" id="db-include-weekends" onchange="loadDashboard()" style="cursor:pointer;"> Incluir fines de semana
+      </label>
     </div>
   </div>
   <div id="dashboard-body" style="display:flex;flex-direction:column;gap:20px;">
@@ -3074,7 +3077,9 @@ async function loadDashboard(){
         const d = new Date(monday);
         d.setDate(monday.getDate()+i);
         const dStr = d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
-        if(dStr <= todayStr) weekDays.push(dStr);
+        const inclWES = document.getElementById('db-include-weekends')?.checked;
+        const dDay = new Date(dStr+'T12:00:00').getDay();
+        if(dStr <= todayStr && (inclWES || (dDay!==0 && dDay!==6))) weekDays.push(dStr);
       }
       weekLabel.textContent = 'Semana actual: '+weekDays[0]+' → '+weekDays[weekDays.length-1];
 
@@ -3087,7 +3092,8 @@ async function loadDashboard(){
       for(let d=new Date(start); d<=todayLocal4; d.setDate(d.getDate()+1)){
         const dow = d.getDay();
         const dStr = d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
-        if(dow!==0 && dow!==6) weekDays.push(dStr);
+        const inclWE4 = document.getElementById('db-include-weekends')?.checked;
+        if(inclWE4 || (dow!==0 && dow!==6)) weekDays.push(dStr);
       }
       weekLabel.textContent = 'Últimas 4 semanas: '+weekDays[0]+' → '+weekDays[weekDays.length-1];
 
@@ -3099,7 +3105,8 @@ async function loadDashboard(){
       for(let d=new Date(firstDay); d<=todayLocalM; d.setDate(d.getDate()+1)){
         const dow = d.getDay();
         const dStr = d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
-        if(dow!==0 && dow!==6) weekDays.push(dStr);
+        const inclWEM = document.getElementById('db-include-weekends')?.checked;
+        if(inclWEM || (dow!==0 && dow!==6)) weekDays.push(dStr);
       }
       const monthName = todayLocalM.toLocaleDateString('es-CL',{month:'long',year:'numeric'});
       weekLabel.textContent = 'Mes actual: '+monthName+' ('+weekDays.length+' días hábiles)';
@@ -3117,7 +3124,8 @@ async function loadDashboard(){
       for(let d=new Date(firstDay); d<=limitDay; d.setDate(d.getDate()+1)){
         const dow = d.getDay();
         const dStr2 = d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
-        if(dow!==0 && dow!==6) weekDays.push(dStr2);
+        const inclWEMe = document.getElementById('db-include-weekends')?.checked;
+        if(inclWEMe || (dow!==0 && dow!==6)) weekDays.push(dStr2);
       }
       const monthName = firstDay.toLocaleDateString('es-CL',{month:'long',year:'numeric'});
       weekLabel.textContent = monthName.charAt(0).toUpperCase()+monthName.slice(1)+' ('+weekDays.length+' días hábiles)';
