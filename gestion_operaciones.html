@@ -3016,6 +3016,73 @@ async function guardarResultado(uid){
 }
 
 
+// ── Cálculo de horas hábiles ─────────────────────────────────────────────
+function calcWorkingMinutes(startISO, endISO){
+  if(!startISO || !endISO) return null;
+  const start = new Date(startISO);
+  const end = new Date(endISO);
+  if(isNaN(start)||isNaN(end)||end<=start) return null;
+
+  const WH_START = 9 * 60;      // 09:00 en minutos
+  const WH_END = 18.5 * 60;     // 18:30 en minutos
+  const WH_DAY = WH_END - WH_START; // minutos hábiles por día
+
+  function minutesOfDay(d){
+    return d.getHours()*60 + d.getMinutes();
+  }
+  function clamp(m){ return Math.max(WH_START, Math.min(WH_END, m)); }
+  function isWorkday(d){
+    const dow = d.getDay();
+    return dow >= 1 && dow <= 5; // lun-vie
+  }
+
+  let total = 0;
+  let cur = new Date(start);
+
+  // Avanzar hasta el próximo momento hábil
+  while(cur < end){
+    const dow = cur.getDay();
+    const mDay = minutesOfDay(cur);
+
+    if(!isWorkday(cur)){
+      // Fin de semana — saltar al lunes 09:00
+      const daysToMon = dow === 0 ? 1 : 2;
+      cur.setDate(cur.getDate() + daysToMon);
+      cur.setHours(9,0,0,0);
+      continue;
+    }
+
+    if(mDay >= WH_END){
+      // Fuera del horario hábil (noche) — saltar al día siguiente 09:00
+      cur.setDate(cur.getDate()+1);
+      cur.setHours(9,0,0,0);
+      continue;
+    }
+
+    if(mDay < WH_START){
+      // Antes de las 09:00 — avanzar a las 09:00
+      cur.setHours(9,0,0,0);
+      continue;
+    }
+
+    // Estamos en horario hábil — calcular hasta cuándo
+    const endOfDay = new Date(cur);
+    endOfDay.setHours(18,30,0,0);
+    const boundary = end < endOfDay ? end : endOfDay;
+    total += (boundary - cur) / 60000;
+    cur = new Date(boundary);
+  }
+
+  return Math.round(total);
+}
+
+function fmtWorkMins(m){
+  if(m===null||m===undefined) return '--';
+  if(m < 60) return m + 'min';
+  const h = Math.floor(m/60), min = m%60;
+  return h+'h'+(min>0?' '+min+'min':'');
+}
+
 var _dashPeriod = 'semana';
 
 function buildMesSelector(){
@@ -3364,11 +3431,9 @@ async function loadDashboard(){
 
     allOps.forEach(function(op){
       if(op.estado!=='HECHO' || !op.asignado_en || !op.completado_en) return;
-      var inicio = new Date(op.asignado_en).getTime();
-      var fin = new Date(op.completado_en).getTime();
-      if(isNaN(inicio)||isNaN(fin)||fin<=inicio) return;
-      var mins = Math.round((fin-inicio)/60000);
-      if(mins<=0 || mins>480) return; // descartar outliers >8h o negativos
+      var mins = calcWorkingMinutes(op.asignado_en, op.completado_en);
+      if(mins===null || mins<=0) return;
+      if(mins > 510) return; // descartar outliers >8.5h hábiles
 
       var a = op.analista||'Sin asignar';
       if(!tiempoAnalista[a]) tiempoAnalista[a]={total:0,count:0,min:Infinity,max:0};
@@ -3395,7 +3460,7 @@ async function loadDashboard(){
     var tablaFilas = analistas_tiempo.map(function(entry){
       var nombre=entry[0], d=entry[1];
       var avg=Math.round(d.total/d.count);
-      var color=avg<=30?'#27AE60':avg<=60?'#BA7517':'#C0392B';
+      var color=avg<=60?'#27AE60':avg<=120?'#BA7517':'#C0392B';
       return '<tr style="border-bottom:1px solid var(--gray-line);">'
         +'<td style="padding:8px 10px;font-size:13px;font-weight:600;color:var(--navy);">'+nombre+'</td>'
         +'<td style="padding:8px 10px;text-align:center;"><span style="font-size:13px;font-weight:700;color:'+color+';">'+fmtMins(avg)+'</span></td>'
@@ -3421,7 +3486,7 @@ async function loadDashboard(){
     var tiempoHTML = analistas_tiempo.length>0 ? (
       '<div style="background:#fff;border:1px solid var(--gray-line);border-radius:12px;padding:16px;">'
       +'<div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:4px;">⏱ Tiempo de resolución por analista</div>'
-      +'<div style="font-size:12px;color:var(--gray-text);margin-bottom:14px;">Desde asignación hasta HECHO · Verde ≤30min · Ámbar ≤60min · Rojo >60min</div>'
+      +'<div style="font-size:12px;color:var(--gray-text);margin-bottom:14px;">Horas hábiles (09:00–18:30 lun-vie) · Verde ≤60min · Ámbar ≤120min · Rojo >120min</div>'
       +'<table style="width:100%;border-collapse:collapse;">'
       +'<thead><tr style="background:var(--navy);color:#fff;">'
       +'<th style="padding:8px 10px;text-align:left;font-size:12px;">Analista</th>'
