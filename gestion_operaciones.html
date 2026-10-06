@@ -2992,7 +2992,7 @@ function renderResultadoModal(uid){
     // Botones
     + '<div style="display:flex;gap:10px;justify-content:flex-end;">'
     + '<button onclick="cerrarResultadoModal()" style="padding:8px 16px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;font-size:13px;cursor:pointer;">Cancelar</button>'
-    + '<button onclick="guardarResultado(\"'+uid+'\")" style="padding:8px 20px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-size:13px;font-weight:700;cursor:pointer;">Guardar</button>'
+    + '<button id="btn-guardar-res" data-uid="'+uid+'" onclick="guardarResultado(this.dataset.uid)" style="padding:8px 20px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-size:13px;font-weight:700;cursor:pointer;">Guardar</button>'
     + '</div></div></div>';
   
   // Set pre-selected motivo
