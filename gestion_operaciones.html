@@ -411,8 +411,14 @@ tr:last-child td{border-bottom:none;}
       <select id="db-mes-selector" onchange="setDashPeriod('meselegido')" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;color:var(--navy);background:#fff;cursor:pointer;">
         <option value="">Elegir mes...</option>
       </select>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="font-size:12px;color:var(--navy);font-weight:600;">📅</span>
+        <input type="date" id="db-desde" onchange="setDashPeriod('rango')" style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-line);border-radius:8px;color:var(--navy);background:#fff;">
+        <span style="font-size:12px;color:var(--gray-text);">→</span>
+        <input type="date" id="db-hasta" onchange="setDashPeriod('rango')" style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-line);border-radius:8px;color:var(--navy);background:#fff;">
+      </div>
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--navy);cursor:pointer;">
-        <input type="checkbox" id="db-include-weekends" onchange="loadDashboard()" style="cursor:pointer;"> Incluir fines de semana
+        <input type="checkbox" id="db-include-weekends" onchange="loadDashboard()" style="cursor:pointer;"> Fines de semana
       </label>
     </div>
   </div>
@@ -3120,6 +3126,12 @@ function setDashPeriod(period){
     const sel = document.getElementById('db-mes-selector');
     if(sel) sel.value='';
   }
+  // Reset date inputs if not rango
+  if(period!=='rango'){
+    const desde = document.getElementById('db-desde');
+    const hasta = document.getElementById('db-hasta');
+    // Keep values so user can switch back
+  }
   loadDashboard();
 }
 
@@ -3177,6 +3189,20 @@ async function loadDashboard(){
       }
       const monthName = todayLocalM.toLocaleDateString('es-CL',{month:'long',year:'numeric'});
       weekLabel.textContent = 'Mes actual: '+monthName+' ('+weekDays.length+' días hábiles)';
+
+    } else if(_dashPeriod === 'rango'){
+      const desde = document.getElementById('db-desde')?.value;
+      const hasta = document.getElementById('db-hasta')?.value;
+      if(!desde || !hasta){ weekLabel.textContent='Selecciona fecha desde y hasta'; return; }
+      if(hasta < desde){ weekLabel.textContent='La fecha hasta debe ser mayor que desde'; return; }
+      const inclWER = document.getElementById('db-include-weekends')?.checked;
+      for(let d=new Date(desde+'T12:00:00'); ; d.setDate(d.getDate()+1)){
+        const dStr = d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+        if(dStr > hasta) break;
+        const dow = d.getDay();
+        if(inclWER || (dow!==0 && dow!==6)) weekDays.push(dStr);
+      }
+      weekLabel.textContent = 'Rango: '+desde+' → '+hasta+' ('+weekDays.length+' días)';
 
     } else if(_dashPeriod === 'meselegido'){
       // Mes elegido desde selector
