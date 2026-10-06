@@ -3424,26 +3424,39 @@ async function loadDashboard(){
       + '</div>'
     ) : '';
 
-    // Tiempo de resolución por analista
+    // Tiempo por operación: diferencia entre HECHO consecutivos del mismo analista
     var tiempoAnalista = {};
-    var tiempoIvanNormal = []; // ops SIN derivar_ivan
-    var tiempoIvanDeriv = [];  // ops CON derivar_ivan
+    var tiempoIvanNormal = [];
+    var tiempoIvanDeriv = [];
 
+    // Agrupar ops HECHO por analista y ordenar por completado_en
+    var opsPorAnalista = {};
     allOps.forEach(function(op){
-      if(op.estado!=='HECHO' || !op.asignado_en || !op.completado_en) return;
-      var mins = calcWorkingMinutes(op.asignado_en, op.completado_en);
-      if(mins===null || mins<=0) return;
-      if(mins > 510) return; // descartar outliers >8.5h hábiles
-
+      if(op.estado!=='HECHO' || !op.completado_en) return;
       var a = op.analista||'Sin asignar';
-      if(!tiempoAnalista[a]) tiempoAnalista[a]={total:0,count:0,min:Infinity,max:0};
-      tiempoAnalista[a].total+=mins;
-      tiempoAnalista[a].count++;
-      if(mins<tiempoAnalista[a].min) tiempoAnalista[a].min=mins;
-      if(mins>tiempoAnalista[a].max) tiempoAnalista[a].max=mins;
+      if(!opsPorAnalista[a]) opsPorAnalista[a] = [];
+      opsPorAnalista[a].push(op);
+    });
 
-      if(op._derivar_ivan) tiempoIvanDeriv.push(mins);
-      else tiempoIvanNormal.push(mins);
+    // Calcular diferencia entre HECHOs consecutivos
+    Object.keys(opsPorAnalista).forEach(function(analista){
+      var ops_a = opsPorAnalista[analista].slice().sort(function(a,b){
+        return new Date(a.completado_en) - new Date(b.completado_en);
+      });
+      if(!tiempoAnalista[analista]) tiempoAnalista[analista]={total:0,count:0,min:Infinity,max:0};
+      for(var i=1; i<ops_a.length; i++){
+        var prev = new Date(ops_a[i-1].completado_en);
+        var curr = new Date(ops_a[i].completado_en);
+        var mins = Math.round((curr-prev)/60000);
+        // Descartar gaps >90 min (almuerzo, pausa larga) o negativos
+        if(mins<=0 || mins>90) continue;
+        tiempoAnalista[analista].total+=mins;
+        tiempoAnalista[analista].count++;
+        if(mins<tiempoAnalista[analista].min) tiempoAnalista[analista].min=mins;
+        if(mins>tiempoAnalista[analista].max) tiempoAnalista[analista].max=mins;
+        if(ops_a[i]._derivar_ivan) tiempoIvanDeriv.push(mins);
+        else tiempoIvanNormal.push(mins);
+      }
     });
 
     function avgArr(arr){ return arr.length?Math.round(arr.reduce(function(a,b){return a+b;},0)/arr.length):null; }
@@ -3460,7 +3473,7 @@ async function loadDashboard(){
     var tablaFilas = analistas_tiempo.map(function(entry){
       var nombre=entry[0], d=entry[1];
       var avg=Math.round(d.total/d.count);
-      var color=avg<=60?'#27AE60':avg<=120?'#BA7517':'#C0392B';
+      var color=avg<=15?'#27AE60':avg<=30?'#BA7517':'#C0392B';
       return '<tr style="border-bottom:1px solid var(--gray-line);">'
         +'<td style="padding:8px 10px;font-size:13px;font-weight:600;color:var(--navy);">'+nombre+'</td>'
         +'<td style="padding:8px 10px;text-align:center;"><span style="font-size:13px;font-weight:700;color:'+color+';">'+fmtMins(avg)+'</span></td>'
@@ -3486,7 +3499,7 @@ async function loadDashboard(){
     var tiempoHTML = analistas_tiempo.length>0 ? (
       '<div style="background:#fff;border:1px solid var(--gray-line);border-radius:12px;padding:16px;">'
       +'<div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:4px;">⏱ Tiempo de resolución por analista</div>'
-      +'<div style="font-size:12px;color:var(--gray-text);margin-bottom:14px;">Horas hábiles (09:00–18:30 lun-vie) · Verde ≤60min · Ámbar ≤120min · Rojo >120min</div>'
+      +'<div style="font-size:12px;color:var(--gray-text);margin-bottom:14px;">Tiempo entre operaciones consecutivas HECHO · Verde ≤15min · Ámbar ≤30min · Rojo >30min · (gaps >90min excluidos)</div>'
       +'<table style="width:100%;border-collapse:collapse;">'
       +'<thead><tr style="background:var(--navy);color:#fff;">'
       +'<th style="padding:8px 10px;text-align:left;font-size:12px;">Analista</th>'
