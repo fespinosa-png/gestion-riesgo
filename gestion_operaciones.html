@@ -404,6 +404,12 @@ tr:last-child td{border-bottom:none;}
       <h2 style="font-size:20px;font-weight:700;color:var(--navy);margin:0 0 4px 0;">Dashboard</h2>
       <div id="dashboard-week-label" style="font-size:13px;color:var(--gray-text);"></div>
     </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <select id="db-filter-analista" onchange="loadDashboard()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;color:var(--navy);background:#fff;">
+        <option value="">👥 Todos los analistas</option>
+      </select>
+      <button onclick="exportDashboardPDF()" style="font-size:12px;padding:6px 14px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;cursor:pointer;">📄 Exportar PDF</button>
+    </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
       <button id="db-btn-semana" class="btn-secondary" onclick="setDashPeriod('semana')" style="font-size:12px;padding:6px 14px;font-weight:700;background:var(--navy);color:#fff;border:none;">Esta semana</button>
       <button id="db-btn-4semanas" class="btn-secondary" onclick="setDashPeriod('4semanas')" style="font-size:12px;padding:6px 14px;">4 semanas</button>
@@ -1708,7 +1714,7 @@ function goTo(tab){
   document.querySelectorAll('.nav-tab')[tabs[tab]].classList.add('active');
   if(tab==='seguimiento') loadSeguimiento();
   if(tab==='historial') loadHistorial();
-  if(tab==='dashboard'){ buildMesSelector(); loadDashboard(); }
+  if(tab==='dashboard'){ buildMesSelector(); buildAnalistaFilter(); loadDashboard(); }
   if(tab==='ops'){ ensureTeamReady().then(()=>loadOpsForToday()).then(()=>{ buildOpsEntry(); updateConfirmDateLabel(); updateDraftBadge(); }); }
   if(tab==='miturno') loadMiTurno();
   if(tab==='equipo') renderEquipo();
@@ -3091,6 +3097,54 @@ function fmtWorkMins(m){
 
 var _dashPeriod = 'semana';
 
+function buildAnalistaFilter(){
+  const sel = document.getElementById('db-filter-analista');
+  if(!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">👥 Todos los analistas</option>';
+  TEAM.filter(t=>t.name!=='').forEach(function(t){
+    const opt = document.createElement('option');
+    opt.value = t.name;
+    opt.textContent = t.name;
+    if(t.name === current) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+function exportDashboardPDF(){
+  const body = document.getElementById('dashboard-body');
+  const label = document.getElementById('dashboard-week-label').textContent;
+  const win = window.open('','_blank');
+  win.document.write('<html><head><title>Dashboard Creditú — '+label+'</title>');
+  win.document.write('<style>body{font-family:Calibri,Arial,sans-serif;font-size:12px;color:#002960;margin:20px;}');
+  win.document.write('h1{font-size:18px;border-bottom:3px solid #00808F;padding-bottom:8px;}');
+  win.document.write('table{border-collapse:collapse;width:100%;margin:12px 0;}');
+  win.document.write('th{background:#002960;color:#fff;padding:6px 10px;font-size:11px;}');
+  win.document.write('td{padding:6px 10px;border-bottom:1px solid #e0e0e0;font-size:11px;}');
+  win.document.write('.kpi{display:inline-block;background:#E0F3F5;border:1px solid #00808F;border-radius:8px;padding:10px 16px;margin:6px;text-align:center;}');
+  win.document.write('.kpi-val{font-size:22px;font-weight:800;color:#002960;display:block;}');
+  win.document.write('.kpi-lbl{font-size:10px;color:#5C6670;}');
+  win.document.write('@media print{button{display:none!important;}}');
+  win.document.write('</style></head><body>');
+  win.document.write('<h1>Dashboard Riesgo Originación — Creditú</h1>');
+  win.document.write('<p style="color:#5C6670;font-size:11px;">'+label+' | Exportado: '+new Date().toLocaleString('es-CL')+'</p>');
+  // Copy dashboard tables (exclude charts)
+  const tables = body.querySelectorAll('table');
+  const kpis = body.querySelectorAll('[style*="grid"]');
+  // Get all non-canvas sections
+  const sections = body.querySelectorAll('div[style*="background:#fff"]');
+  sections.forEach(function(sec){
+    const clone = sec.cloneNode(true);
+    // Remove canvas elements
+    clone.querySelectorAll('canvas').forEach(function(c){ c.remove(); });
+    clone.querySelectorAll('button').forEach(function(b){ b.remove(); });
+    if(clone.textContent.trim()) win.document.write(clone.outerHTML);
+  });
+  win.document.write('</body></html>');
+  win.document.close();
+  setTimeout(function(){ win.print(); }, 500);
+}
+
 function buildMesSelector(){
   const sel = document.getElementById('db-mes-selector');
   if(!sel) return;
@@ -3244,8 +3298,14 @@ async function loadDashboard(){
       }catch(e){}
     }
 
+    // Aplicar filtro de analista si está seleccionado
+    const filtroAnalista = document.getElementById('db-filter-analista')?.value || '';
+    if(filtroAnalista){
+      allOps = allOps.filter(function(o){ return o.analista===filtroAnalista; });
+    }
+
     if(!allOps.length){
-      body.innerHTML = '<div class="empty">Sin datos para esta semana.</div>';
+      body.innerHTML = '<div class="empty">Sin datos para este período'+(filtroAnalista?' (analista: '+filtroAnalista+')':'')+'.</div>';
       return;
     }
 
