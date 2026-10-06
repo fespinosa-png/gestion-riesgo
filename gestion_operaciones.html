@@ -200,6 +200,9 @@ tr:last-child td{border-bottom:none;}
 </style>
   <!-- Chart.js para gráficos del Dashboard -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+  <!-- html2canvas y jsPDF para exportar Dashboard -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <!-- Firebase Auth -->
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
@@ -3111,38 +3114,77 @@ function buildAnalistaFilter(){
   });
 }
 
-function exportDashboardPDF(){
+async function exportDashboardPDF(){
   const body = document.getElementById('dashboard-body');
   const label = document.getElementById('dashboard-week-label').textContent;
-  const win = window.open('','_blank');
-  win.document.write('<html><head><title>Dashboard Creditú — '+label+'</title>');
-  win.document.write('<style>body{font-family:Calibri,Arial,sans-serif;font-size:12px;color:#002960;margin:20px;}');
-  win.document.write('h1{font-size:18px;border-bottom:3px solid #00808F;padding-bottom:8px;}');
-  win.document.write('table{border-collapse:collapse;width:100%;margin:12px 0;}');
-  win.document.write('th{background:#002960;color:#fff;padding:6px 10px;font-size:11px;}');
-  win.document.write('td{padding:6px 10px;border-bottom:1px solid #e0e0e0;font-size:11px;}');
-  win.document.write('.kpi{display:inline-block;background:#E0F3F5;border:1px solid #00808F;border-radius:8px;padding:10px 16px;margin:6px;text-align:center;}');
-  win.document.write('.kpi-val{font-size:22px;font-weight:800;color:#002960;display:block;}');
-  win.document.write('.kpi-lbl{font-size:10px;color:#5C6670;}');
-  win.document.write('@media print{button{display:none!important;}}');
-  win.document.write('</style></head><body>');
-  win.document.write('<h1>Dashboard Riesgo Originación — Creditú</h1>');
-  win.document.write('<p style="color:#5C6670;font-size:11px;">'+label+' | Exportado: '+new Date().toLocaleString('es-CL')+'</p>');
-  // Copy dashboard tables (exclude charts)
-  const tables = body.querySelectorAll('table');
-  const kpis = body.querySelectorAll('[style*="grid"]');
-  // Get all non-canvas sections
-  const sections = body.querySelectorAll('div[style*="background:#fff"]');
-  sections.forEach(function(sec){
-    const clone = sec.cloneNode(true);
-    // Remove canvas elements
-    clone.querySelectorAll('canvas').forEach(function(c){ c.remove(); });
-    clone.querySelectorAll('button').forEach(function(b){ b.remove(); });
-    if(clone.textContent.trim()) win.document.write(clone.outerHTML);
-  });
-  win.document.write('</body></html>');
-  win.document.close();
-  setTimeout(function(){ win.print(); }, 500);
+  const btn = document.querySelector('[onclick="exportDashboardPDF()"]');
+  if(btn){ btn.textContent='⏳ Generando...'; btn.disabled=true; }
+
+  try{
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const margin = 12;
+
+    // Header
+    pdf.setFillColor(0, 41, 96);
+    pdf.rect(0, 0, pageW, 18, 'F');
+    pdf.setTextColor(255,255,255);
+    pdf.setFontSize(13);
+    pdf.setFont('helvetica','bold');
+    pdf.text('GERENCIA DE RIESGO — CREDITÚ', margin, 8);
+    pdf.setFontSize(9);
+    pdf.setFont('helvetica','normal');
+    pdf.text('Dashboard Riesgo Originación', margin, 14);
+    pdf.setTextColor(0,204,209);
+    pdf.setFontSize(8);
+    pdf.text(label, pageW-margin, 14, {align:'right'});
+    pdf.text('Exportado: '+new Date().toLocaleString('es-CL'), pageW-margin, 8, {align:'right'});
+
+    // Capture dashboard body as image
+    const canvas = await html2canvas(body, {
+      scale: 1.5,
+      useCORS: true,
+      backgroundColor: '#F4F5F7',
+      logging: false,
+      ignoreElements: function(el){ return el.tagName==='BUTTON'; }
+    });
+
+    const imgData = canvas.toDataURL('image/jpeg', 0.85);
+    const imgW = pageW - margin*2;
+    const imgH = (canvas.height * imgW) / canvas.width;
+    let y = 22;
+    let remaining = imgH;
+    let srcY = 0;
+
+    while(remaining > 0){
+      const sliceH = Math.min(remaining, pageH - y - 10);
+      const sliceCanvas = document.createElement('canvas');
+      sliceCanvas.width = canvas.width;
+      sliceCanvas.height = (sliceH / imgW) * canvas.width;
+      const ctx = sliceCanvas.getContext('2d');
+      ctx.drawImage(canvas, 0, srcY*(canvas.width/imgW), canvas.width, sliceCanvas.height, 0, 0, canvas.width, sliceCanvas.height);
+      pdf.addImage(sliceCanvas.toDataURL('image/jpeg',0.85), 'JPEG', margin, y, imgW, sliceH);
+      srcY += sliceH;
+      remaining -= sliceH;
+      if(remaining > 0){ pdf.addPage(); y = 10; }
+    }
+
+    // Footer on last page
+    pdf.setFillColor(0, 204, 209);
+    pdf.rect(0, pageH-6, pageW, 6, 'F');
+    pdf.setTextColor(0,41,96);
+    pdf.setFontSize(7);
+    pdf.text('Confidencial — Uso interno Creditú', pageW/2, pageH-2, {align:'center'});
+
+    pdf.save('Dashboard_Creditu_'+label.replace(/[^a-z0-9]/gi,'_')+'.pdf');
+  }catch(e){
+    console.error('PDF error:', e);
+    alert('Error al generar PDF: '+e.message);
+  }finally{
+    if(btn){ btn.textContent='📄 Exportar PDF'; btn.disabled=false; }
+  }
 }
 
 function buildMesSelector(){
