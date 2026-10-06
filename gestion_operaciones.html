@@ -3080,22 +3080,28 @@ async function loadDashboard(){
 
     } else if(_dashPeriod === '4semanas'){
       // Últimos 28 días hábiles
-      const start = new Date(today);
-      start.setDate(today.getDate()-27);
-      for(let d=new Date(start); d<=today; d.setDate(d.getDate()+1)){
+      const todayStr4 = todayISO();
+      const todayLocal4 = new Date(todayStr4+'T12:00:00');
+      const start = new Date(todayLocal4);
+      start.setDate(todayLocal4.getDate()-27);
+      for(let d=new Date(start); d<=todayLocal4; d.setDate(d.getDate()+1)){
         const dow = d.getDay();
-        if(dow!==0 && dow!==6) weekDays.push(new Date(d).toISOString().slice(0,10));
+        const dStr = d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+        if(dow!==0 && dow!==6) weekDays.push(dStr);
       }
       weekLabel.textContent = 'Últimas 4 semanas: '+weekDays[0]+' → '+weekDays[weekDays.length-1];
 
     } else if(_dashPeriod === 'mes'){
       // Mes actual
-      const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-      for(let d=new Date(firstDay); d<=today; d.setDate(d.getDate()+1)){
+      const todayStrM = todayISO();
+      const todayLocalM = new Date(todayStrM+'T12:00:00');
+      const firstDay = new Date(todayLocalM.getFullYear(), todayLocalM.getMonth(), 1);
+      for(let d=new Date(firstDay); d<=todayLocalM; d.setDate(d.getDate()+1)){
         const dow = d.getDay();
-        if(dow!==0 && dow!==6) weekDays.push(new Date(d).toISOString().slice(0,10));
+        const dStr = d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+        if(dow!==0 && dow!==6) weekDays.push(dStr);
       }
-      const monthName = today.toLocaleDateString('es-CL',{month:'long',year:'numeric'});
+      const monthName = todayLocalM.toLocaleDateString('es-CL',{month:'long',year:'numeric'});
       weekLabel.textContent = 'Mes actual: '+monthName+' ('+weekDays.length+' días hábiles)';
 
     } else if(_dashPeriod === 'meselegido'){
@@ -3110,7 +3116,8 @@ async function loadDashboard(){
       const limitDay = lastDay < today ? lastDay : today;
       for(let d=new Date(firstDay); d<=limitDay; d.setDate(d.getDate()+1)){
         const dow = d.getDay();
-        if(dow!==0 && dow!==6) weekDays.push(new Date(d).toISOString().slice(0,10));
+        const dStr2 = d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+        if(dow!==0 && dow!==6) weekDays.push(dStr2);
       }
       const monthName = firstDay.toLocaleDateString('es-CL',{month:'long',year:'numeric'});
       weekLabel.textContent = monthName.charAt(0).toUpperCase()+monthName.slice(1)+' ('+weekDays.length+' días hábiles)';
