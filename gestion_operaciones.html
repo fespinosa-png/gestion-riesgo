@@ -2510,7 +2510,7 @@ async function cargarDesdeMaestro(){
       (urgentes ? ' · <span style="color:var(--amber);font-weight:600;">' + urgentes + ' urgentes</span>' : '') +
       '<br><span style="color:var(--teal);">🔷 Inmediata: ' + inmediatas + '</span>' +
       ' · <span style="color:var(--amber);">🔶 Pre Aprobación: ' + preAprobadas + '</span>' +
-      (dayOps.filter(function(o){return o._derivar_ivan;}).length ? ' · <span style="color:#8E44AD;font-weight:600;">🏷 Derivadas a Iván: ' + dayOps.filter(function(o){return o._derivar_ivan;}).length + '</span>' : '') +
+      (dayOps.filter(function(o){return o._derivar_ivan;}).length ? ' · <span style="color:#8E44AD;font-weight:600;">🤖 De Iván IA: ' + dayOps.filter(function(o){return o._derivar_ivan;}).length + '</span>' : '') +
       '. Revisa la asignación y confirma.';
 
   } catch(e){
@@ -2825,7 +2825,7 @@ function renderSeguimiento(){
         ${op.identificador||'--'}
         ${op._isDup?'<div class="dup-warning"> Repetido</div>':''}
         ${op._needs_review?'<div style="font-size:10px;color:var(--magenta);font-weight:700;">⚠ Revisar asignacion</div>':''}
-        ${op._derivar_ivan?'<div style="font-size:10px;font-weight:700;color:#8E44AD;">🏷 Derivar → Iván</div>':''}
+        ${op._derivar_ivan?'<div style="font-size:10px;font-weight:700;color:#8E44AD;">🤖 Iván IA</div>':''}
         ${op._categoria_sla?`<span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:${(op._categoria_sla||'').includes('Pre')?'#FFF3CD':'#E0F3F5'};color:${(op._categoria_sla||'').includes('Pre')?'#BA7517':'#00808F'}">${(op._categoria_sla||'').includes('Pre')?'🔶 Pre Apr.':'🔷 Inm.'}</span>`:''}
       </td>
       <td><div class="analyst-name" style="font-size:13px;">${op.analista||'--'}</div></td>
