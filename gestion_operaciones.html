@@ -3064,10 +3064,12 @@ async function loadDashboard(){
 
     if(_dashPeriod === 'semana'){
       // Lunes a hoy — usar fecha local para evitar desfase UTC
-      const todayStr = todayISO();
-      const dayOfWeek = today.getDay();
-      const monday = new Date(today);
-      monday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+      const todayStr = todayISO(); // usa fecha local correcta
+      // Reconstruir today desde la fecha local para evitar desfase UTC
+      const todayLocal = new Date(todayStr+'T12:00:00');
+      const dayOfWeek = todayLocal.getDay();
+      const monday = new Date(todayLocal);
+      monday.setDate(todayLocal.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
       for(let i=0; i<7; i++){
         const d = new Date(monday);
         d.setDate(monday.getDate()+i);
