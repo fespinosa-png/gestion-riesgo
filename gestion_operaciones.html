@@ -3063,14 +3063,16 @@ async function loadDashboard(){
     let weekDays = [];
 
     if(_dashPeriod === 'semana'){
-      // Lunes a hoy
+      // Lunes a hoy — usar fecha local para evitar desfase UTC
+      const todayStr = todayISO();
       const dayOfWeek = today.getDay();
       const monday = new Date(today);
       monday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
       for(let i=0; i<7; i++){
         const d = new Date(monday);
         d.setDate(monday.getDate()+i);
-        if(d <= today) weekDays.push(d.toISOString().slice(0,10));
+        const dStr = d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+        if(dStr <= todayStr) weekDays.push(dStr);
       }
       weekLabel.textContent = 'Semana actual: '+weekDays[0]+' → '+weekDays[weekDays.length-1];
 
