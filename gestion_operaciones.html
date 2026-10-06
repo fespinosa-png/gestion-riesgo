@@ -330,7 +330,7 @@ tr:last-child td{border-bottom:none;}
     <table>
       <thead>
         <tr>
-          <th>Producto</th><th>Identificador</th><th>Analista</th><th>Urgencia</th><th>SLA</th><th>Estado</th><th>Completado</th><th>Observación</th>
+          <th>Producto</th><th>Identificador</th><th>Origen</th><th>Analista</th><th>Urgencia</th><th>SLA</th><th>Estado</th><th>Completado</th><th>Observación</th>
         </tr>
       </thead>
       <tbody id="seg-body"></tbody>
@@ -2825,9 +2825,9 @@ function renderSeguimiento(){
         ${op.identificador||'--'}
         ${op._isDup?'<div class="dup-warning"> Repetido</div>':''}
         ${op._needs_review?'<div style="font-size:10px;color:var(--magenta);font-weight:700;">⚠ Revisar asignacion</div>':''}
-        ${op._derivar_ivan?'<div style="font-size:10px;font-weight:700;color:#8E44AD;">🤖 Iván IA</div>':''}
         ${op._categoria_sla?`<span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:${(op._categoria_sla||'').includes('Pre')?'#FFF3CD':'#E0F3F5'};color:${(op._categoria_sla||'').includes('Pre')?'#BA7517':'#00808F'}">${(op._categoria_sla||'').includes('Pre')?'🔶 Pre Apr.':'🔷 Inm.'}</span>`:''}
       </td>
+      <td style="text-align:center;">${op._derivar_ivan?'<span style="display:inline-block;background:#F3E5F5;color:#8E44AD;font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;border:1px solid #CE93D8;">🤖 Iván IA</span>':'<span style="font-size:11px;color:var(--gray-text);">—</span>'}</td>
       <td><div class="analyst-name" style="font-size:13px;">${op.analista||'--'}</div></td>
       <td><select onchange="updateOp('${op.uid}','tier',this.value);buildOpsEntry();" style="font-size:11px;padding:3px 5px;border:1px solid var(--gray-line);border-radius:6px;background:#fff;cursor:pointer;"><option value="normal" ${op.tier==='normal'?'selected':''}>Normal</option><option value="urgente" ${op.tier==='urgente'?'selected':''}>⚡ Urgente</option><option value="vencido" ${op.tier==='vencido'?'selected':''}>🔴 Vencida</option></select></td>
       ${calcSLACell(op)}
