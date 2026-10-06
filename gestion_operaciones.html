@@ -3470,17 +3470,51 @@ async function loadDashboard(){
     var avgIvanDeriv = avgArr(tiempoIvanDeriv);
     var diffPct = avgNormal&&avgIvanDeriv ? Math.round((avgIvanDeriv-avgNormal)/avgNormal*100) : null;
 
+    // Calcular también por día
+    var tiempoAnalistaDia = {};
+    Object.keys(opsPorAnalista).forEach(function(analista){
+      var ops_a = opsPorAnalista[analista].slice().sort(function(a,b){
+        return new Date(a.completado_en)-new Date(b.completado_en);
+      });
+      for(var i=1; i<ops_a.length; i++){
+        var prev = new Date(ops_a[i-1].completado_en);
+        var curr = new Date(ops_a[i].completado_en);
+        var mins = Math.round((curr-prev)/60000);
+        if(mins<=0 || mins>90) continue;
+        var fecha = curr.getFullYear()+'-'+('0'+(curr.getMonth()+1)).slice(-2)+'-'+('0'+curr.getDate()).slice(-2);
+        var key = analista+'|'+fecha;
+        if(!tiempoAnalistaDia[key]) tiempoAnalistaDia[key]={total:0,count:0};
+        tiempoAnalistaDia[key].total+=mins;
+        tiempoAnalistaDia[key].count++;
+      }
+    });
+
     var tablaFilas = analistas_tiempo.map(function(entry){
       var nombre=entry[0], d=entry[1];
       var avg=Math.round(d.total/d.count);
       var color=avg<=15?'#27AE60':avg<=30?'#BA7517':'#C0392B';
-      return '<tr style="border-bottom:1px solid var(--gray-line);">'
-        +'<td style="padding:8px 10px;font-size:13px;font-weight:600;color:var(--navy);">'+nombre+'</td>'
+      var diasRows = weekDays.map(function(fecha){
+        var key = nombre+'|'+fecha;
+        var dd = tiempoAnalistaDia[key];
+        if(!dd || dd.count===0) return '';
+        var davg = Math.round(dd.total/dd.count);
+        var dcolor = davg<=15?'#27AE60':davg<=30?'#BA7517':'#C0392B';
+        var dayName = new Date(fecha+'T12:00:00').toLocaleDateString('es-CL',{weekday:'short',day:'numeric',month:'short'});
+        return '<tr style="background:#f9f9f9;border-bottom:1px solid #eee;">'
+          +'<td style="padding:4px 10px 4px 24px;font-size:11px;color:var(--gray-text);">↳ '+dayName+'</td>'
+          +'<td style="padding:4px 10px;text-align:center;font-size:11px;font-weight:600;color:'+dcolor+';">'+fmtMins(davg)+'</td>'
+          +'<td style="padding:4px 10px;text-align:center;font-size:11px;color:var(--gray-text);">--</td>'
+          +'<td style="padding:4px 10px;text-align:center;font-size:11px;color:var(--gray-text);">--</td>'
+          +'<td style="padding:4px 10px;text-align:center;font-size:11px;color:var(--gray-text);">'+dd.count+' ops</td>'
+          +'</tr>';
+      }).join('');
+      return '<tr style="border-bottom:1px solid var(--gray-line);background:#fff;">'
+        +'<td style="padding:8px 10px;font-size:13px;font-weight:700;color:var(--navy);">'+nombre+'</td>'
         +'<td style="padding:8px 10px;text-align:center;"><span style="font-size:13px;font-weight:700;color:'+color+';">'+fmtMins(avg)+'</span></td>'
         +'<td style="padding:8px 10px;text-align:center;font-size:12px;color:#27AE60;">'+fmtMins(d.min)+'</td>'
         +'<td style="padding:8px 10px;text-align:center;font-size:12px;color:#C0392B;">'+fmtMins(d.max)+'</td>'
         +'<td style="padding:8px 10px;text-align:center;font-size:12px;color:var(--gray-text);">'+d.count+' ops</td>'
-        +'</tr>';
+        +'</tr>'+diasRows;
     }).join('');
 
     var ivanCompHTML = '';
