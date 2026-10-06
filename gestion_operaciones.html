@@ -199,7 +199,7 @@ tr:last-child td{border-bottom:none;}
   .op-row.has-dup input[type=text]{border-color:var(--red);background:var(--red-light);}
 </style>
   <!-- pptxgenjs para exportar PPT del Dashboard -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/PptxGenJS/3.12.0/pptxgen.bundle.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
   <!-- Chart.js para gráficos del Dashboard -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
   <!-- html2canvas y jsPDF para exportar Dashboard -->
@@ -3123,7 +3123,8 @@ async function exportDashboardPPT(){
 
   try{
     const NAVY='002960', TEAL='00808F', CYAN='00CCD1', WHITE='FFFFFF', GRAY='F4F5F7';
-    const pres = new PptxGenJS();
+    const PPT = window.pptxgen || window.PptxGenJS || PptxGenJS;
+    const pres = new PPT();
     pres.layout = 'LAYOUT_WIDE';
     pres.author = 'Gerencia de Riesgo — Creditú';
     pres.title = 'Dashboard Riesgo Originación';
