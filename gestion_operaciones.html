@@ -3493,7 +3493,12 @@ async function loadDashboard(){
       var nombre=entry[0], d=entry[1];
       var avg=Math.round(d.total/d.count);
       var color=avg<=15?'#27AE60':avg<=30?'#BA7517':'#C0392B';
-      var diasRows = weekDays.map(function(fecha){
+      // Iterar fechas que tienen datos para este analista (no solo weekDays)
+      var diasDelAnalista = Object.keys(tiempoAnalistaDia)
+        .filter(function(k){ return k.startsWith(nombre+'|'); })
+        .map(function(k){ return k.split('|')[1]; })
+        .sort();
+      var diasRows = diasDelAnalista.map(function(fecha){
         var key = nombre+'|'+fecha;
         var dd = tiempoAnalistaDia[key];
         if(!dd || dd.count===0) return '';
