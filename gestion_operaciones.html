@@ -1059,7 +1059,7 @@ var SP_CONFIG = {
 };
 
 var GS_CONFIG = {
-  scriptUrl: localStorage.getItem('gs_scriptUrl') || 'https://script.google.com/macros/s/AKfycbzMi1HfEB58fgrx0U2qzwhFNN5L--lGoGQl42Uih903xovSqqu95vJYsV9_5wpxDaG9/exec'
+  scriptUrl: localStorage.getItem('gs_scriptUrl') || 'https://script.google.com/macros/s/AKfycbwq97TBEzQRJOBB03L2FUt96vVzInP0ZCltpNospZY9ynOZCP_ALRG1UnMNhJ-dMtNc/exec'
 };
 
 function getStoreMode(){
@@ -1316,7 +1316,7 @@ async function fbPing(){
 }
 
 // Apps Script solo para getMHEPendientes (lectura desde SÁBANA_MAESTRA)
-const GS_MHE_URL = 'https://script.google.com/macros/s/AKfycbzMi1HfEB58fgrx0U2qzwhFNN5L--lGoGQl42Uih903xovSqqu95vJYsV9_5wpxDaG9/exec';
+const GS_MHE_URL = 'https://script.google.com/macros/s/AKfycbwq97TBEzQRJOBB03L2FUt96vVzInP0ZCltpNospZY9ynOZCP_ALRG1UnMNhJ-dMtNc/exec';
 
 async function gsCall(action, params, _retry){
   const payload = JSON.stringify({action, ...params});
