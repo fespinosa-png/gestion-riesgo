@@ -1494,7 +1494,7 @@ var store = {
       return {success:true};
     }catch(e){ console.error('FB setOps:',e); return {success:false}; }
   },
-  async markEstado(uid,estado,ts){
+  async markEstado(uid,estado,ts,resultado){
     try{
       const data = await fbGet('ops/'+currentDate);
       let ops = data ? (typeof data==='string'?JSON.parse(data):(Array.isArray(data)?data:[])) : [];
@@ -1502,6 +1502,7 @@ var store = {
       if(idx>=0){
         ops[idx].estado=estado;
         ops[idx].completado_en=ts||null;
+        if(resultado!==undefined) ops[idx]._resultado=resultado;
         await fbSet('ops/'+currentDate, JSON.stringify(ops));
       }
       return {success:true};
@@ -2922,7 +2923,8 @@ const MOTIVOS_DEVOLUCION = [
     'No cumple antigüedad / continuidad laboral mínima',
     'Cliente socio mayoritario de empresa (requiere documentación adicional)',
     'Empleador con vínculo familiar o parentesco (requiere acreditación especial)',
-    'Cliente o codeudor de Fuerzas de Seguridad y Orden (requiere liquidación especial)'
+    'Cliente o codeudor de Fuerzas de Seguridad y Orden (requiere liquidación especial)',
+    'Operación cruzada — titular es codeudor y codeudor es titular en otra operación simultánea'
   ]},
   {grupo:'Cumplimiento', motivos:[
     'Alerta Gesintel enviada a Compliance — pendiente resolución',
