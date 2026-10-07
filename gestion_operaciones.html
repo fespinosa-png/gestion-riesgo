@@ -2950,7 +2950,8 @@ const MOTIVOS_RECHAZO = [
   {grupo:'Política', motivos:[
     'Operación fuera de rango de monto permitido por política',
     'Edad del titular excede límite de la política al término del crédito',
-    'Producto no disponible para el segmento del cliente'
+    'Producto no disponible para el segmento del cliente',
+    'Civil con embargo o causas civiles vigentes o archivadas dentro del período de exclusión de política'
   ]}
 ];
 
@@ -4291,6 +4292,7 @@ async function loadMiTurno(){
       <button class="estado-big ${op.estado}" onclick="toggleEstadoMiTurno('${op.uid}')">
         ${op.estado==='PENDIENTE'?'Marcar como hecha':'✓ Realizada -- deshacer'}
       </button>
+      ${op.estado==='HECHO'?`<button data-uid="${op.uid}" onclick="renderResultadoModal(this.dataset.uid)" style="margin-top:8px;width:100%;padding:8px;border:1px solid var(--gray-line);border-radius:8px;background:${op._resultado?'#e8f5e9':'#fff'};color:${op._resultado?'#27AE60':'var(--navy)'};font-size:12px;font-weight:600;cursor:pointer;">${op._resultado?('✓ '+op._resultado.tipo.charAt(0).toUpperCase()+op._resultado.tipo.slice(1)):'+ Registrar resultado'}</button>`:''}
     </div>`;
   }).join('');
 }
