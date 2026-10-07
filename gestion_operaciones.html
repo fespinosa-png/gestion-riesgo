@@ -2741,14 +2741,21 @@ async function loadSeguimiento(){
   try{
     const r=await store.get('ops:'+currentDate);
     const gsOps = r&&r.value?JSON.parse(r.value):[];
-    // Merge GS data con backup local para no perder estados HECHO pendientes de sync
     seguimientoOps = mergeOps(gsOps, backup);
-    // Actualizar backup con el merge resultante
     saveLocalBackup(seguimientoOps);
   } catch(e){
-    // Si GS falla, usar backup local
     seguimientoOps = backup || seguimientoOps || [];
   }
+  // Cargar resultados desde ruta separada y mergear (evita race condition)
+  try{
+    const resData = await fbGet('resultados/'+currentDate);
+    if(resData){
+      seguimientoOps.forEach(function(op){
+        const resRaw = resData[op.uid];
+        if(resRaw){ try{ op._resultado = typeof resRaw==='string'?JSON.parse(resRaw):resRaw; }catch(e){} }
+      });
+    }
+  }catch(e){}
   populateFilters();
   renderSeguimiento();
 }
@@ -3029,14 +3036,20 @@ async function guardarResultado(uid){
   if(!tipo){ alert('Selecciona un resultado'); return; }
   if((tipo==='devuelta'||tipo==='rechazada')&&!motivo){ alert('Selecciona un motivo'); return; }
   
+  const resultado = {tipo, motivo, obs, fecha: new Date().toISOString(), analista: currentUser||'--'};
+  
   const op = seguimientoOps.find(o=>o.uid===uid);
   if(op){
-    op._resultado = {tipo, motivo, obs, fecha: new Date().toISOString()};
+    op._resultado = resultado;
     saveLocalBackup(seguimientoOps);
-    try{ await store.markEstado(uid, op.estado, op.completado_en, op._resultado); }catch(e){}
+    // Guardar resultado en ruta separada (sin race condition)
+    try{
+      await fbSet('resultados/'+currentDate+'/'+uid, JSON.stringify(resultado));
+    }catch(e){ console.error('Error guardando resultado:', e); }
   }
   document.getElementById('resultado-modal-bg')?.remove();
   renderSeguimiento();
+  loadMiTurno();
 }
 
 
@@ -4702,8 +4715,17 @@ async function silentRefreshSeguimiento(){
     const changed = JSON.stringify(merged) !== JSON.stringify(seguimientoOps);
     if(changed){
       seguimientoOps = merged;
+      // Mergear resultados desde ruta separada
+      try{
+        const resData = await fbGet('resultados/'+currentDate);
+        if(resData){
+          seguimientoOps.forEach(function(op){
+            const resRaw = resData[op.uid];
+            if(resRaw){ try{ op._resultado = typeof resRaw==='string'?JSON.parse(resRaw):resRaw; }catch(e){} }
+          });
+        }
+      }catch(e){}
       saveLocalBackup(seguimientoOps);
-      // Solo re-renderizar si el usuario no está interactuando (evita "saltos" visuales)
       if(Date.now() - _lastRefresh > 5000){
         populateFilters();
         renderSeguimiento();
