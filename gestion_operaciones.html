@@ -2751,7 +2751,8 @@ async function loadSeguimiento(){
     const resData = await fbGet('resultados/'+currentDate);
     if(resData){
       seguimientoOps.forEach(function(op){
-        const resRaw = resData[op.uid];
+        const stableKey = (op._id_operacion||op.identificador||op.uid).toString().replace(/[.#$/\[\]]/g,'_');
+        const resRaw = resData[stableKey] || resData[op.uid];
         if(resRaw){ try{ op._resultado = typeof resRaw==='string'?JSON.parse(resRaw):resRaw; }catch(e){} }
       });
     }
@@ -3044,7 +3045,10 @@ async function guardarResultado(uid){
     saveLocalBackup(seguimientoOps);
     // Guardar resultado en ruta separada (sin race condition)
     try{
-      await fbSet('resultados/'+currentDate+'/'+uid, JSON.stringify(resultado));
+      // Usar clave estable (id_operacion o rut) para que persista al reasignar
+      const stableKey = (op._id_operacion||op.identificador||uid).toString().replace(/[.#$/[\]]/g,'_');
+      await fbSet('resultados/'+currentDate+'/'+stableKey, JSON.stringify(resultado));
+      op._stableKey = stableKey;
     }catch(e){ console.error('Error guardando resultado:', e); }
   }
   document.getElementById('resultado-modal-bg')?.remove();
@@ -4720,7 +4724,8 @@ async function silentRefreshSeguimiento(){
         const resData = await fbGet('resultados/'+currentDate);
         if(resData){
           seguimientoOps.forEach(function(op){
-            const resRaw = resData[op.uid];
+            const stableKey = (op._id_operacion||op.identificador||op.uid).toString().replace(/[.#$/\[\]]/g,'_');
+            const resRaw = resData[stableKey] || resData[op.uid];
             if(resRaw){ try{ op._resultado = typeof resRaw==='string'?JSON.parse(resRaw):resRaw; }catch(e){} }
           });
         }
