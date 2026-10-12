@@ -2919,49 +2919,44 @@ async function toggleEstado(uid){
 // ── Catálogo de motivos de devolución y rechazo ──────────────────────────
 const MOTIVOS_DEVOLUCION = [
   {grupo:'Documentación', motivos:[
-    'Faltan liquidaciones actualizadas',
-    'Falta certificado de AFP o AFP desactualizada',
-    'Documentación con inconsistencias a validar',
-    'Se requieren cartolas de cuenta corriente',
-    'Carpeta tributaria desactualizada o incompleta'
+    'Liquidaciones desactualizadas',
+    'AFP desactualizada',
+    'Doc. faltante',
+    'Doc. inconsistente',
+    'Cartolas cta. cte.',
+    'Carpeta tributaria'
   ]},
   {grupo:'Riesgo del cliente', motivos:[
-    'Dicom vigente, deudas vencidas, morosas o castigadas en SBIF',
-    'Score en los últimos 6 meses bajo el mínimo permitido',
-    'No cumple antigüedad / continuidad laboral mínima',
-    'Cliente socio mayoritario de empresa (requiere documentación adicional)',
-    'Empleador con vínculo familiar o parentesco (requiere acreditación especial)',
-    'Cliente o codeudor de Fuerzas de Seguridad y Orden (requiere liquidación especial)',
-    'Operación cruzada — titular es codeudor y codeudor es titular en otra operación simultánea',
-    'Propuesta comercial — condiciones o estructura no se ajustan a la política de crédito'
+    'Dicom/deudas SBIF',
+    'Score insuficiente',
+    'Antigüedad laboral',
+    'Socio mayoritario',
+    'Empleador familiar',
+    'FFSS y Orden',
+    'Op. cruzada',
+    'Propuesta comercial'
   ]},
   {grupo:'Cumplimiento', motivos:[
-    'Alerta Gesintel enviada a Compliance — pendiente resolución',
-    'Se requiere mayor información del origen de fondos'
+    'Alerta Gesintel',
+    'Origen de fondos'
   ]}
 ];
 
 const MOTIVOS_RECHAZO = [
   {grupo:'Riesgo crediticio', motivos:[
-    'No recomendado por Compliance',
-    'Inconsistencias graves en revisión de antecedentes laborales',
-    'Cliente o codeudor con empleador familiar que no logra acreditar ingresos',
-    'Deuda consolidada supera capacidad de pago (DFL excedido)',
-    'Historial de morosidad recurrente o castigos en el sistema financiero',
-    'Score definitivamente bajo el mínimo de política'
-  ]},
-  {grupo:'Riesgo empresa / empleador', motivos:[
-    'Empresa sin utilidades — Leasing y Pie Hipotecario Chile',
-    'Empresa con menos de 2 años de antigüedad',
-    'Empleador no verificable o informal'
+    'No rec. Compliance',
+    'Inconsist. laborales',
+    'Empl. familiar',
+    'Morosidad/castigos',
+    'Score definitivo'
   ]},
   {grupo:'Política', motivos:[
-    'Operación fuera de rango de monto permitido por política',
-    'Edad del titular excede límite de la política al término del crédito',
-    'Producto no disponible para el segmento del cliente',
-    'Civil con embargo o causas civiles vigentes o archivadas dentro del período de exclusión de política',
-    'Deudas de pensiones de alimentos vigentes',
-    'Cliente y/o codeudor no cumple criterios mínimos de admisión de la Política de Riesgo (capacidad de pago, score, antigüedad laboral u otros parámetros)'
+    'Monto fuera de política',
+    'Edad fuera de política',
+    'Producto no disponible',
+    'Civil/embargo',
+    'Pensiones alimentos',
+    'Criterios mínimos'
   ]}
 ];
 
@@ -4256,12 +4251,38 @@ async function loadMiTurno(){
   try{
     const r = await store.get('ops:'+currentDate);
     const gsOps = r&&r.value ? JSON.parse(r.value) : [];
-    // Merge con backup local -- nunca pierde HECHO aunque GS tenga PENDIENTE
     seguimientoOps = mergeOps(gsOps, backup || seguimientoOps);
     saveLocalBackup(seguimientoOps);
   } catch(e){
-    // Si GS falla, usar backup local o lo que ya había en memoria
     seguimientoOps = backup || seguimientoOps || [];
+  }
+
+  // Verificar si hay pendientes del día anterior
+  const ayer = (function(){
+    const d = new Date(currentDate+'T12:00:00');
+    d.setDate(d.getDate()-1);
+    // Saltar fin de semana hacia atrás
+    while(d.getDay()===0||d.getDay()===6) d.setDate(d.getDate()-1);
+    return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+  })();
+
+  if(!seguimientoOps.filter(o=>o.analista===currentUser).length || !document.getElementById('banner-ayer-check')){
+    try{
+      const rAyer = await store.get('ops:'+ayer);
+      const opsAyer = rAyer&&rAyer.value ? JSON.parse(rAyer.value) : [];
+      const pendAyer = opsAyer.filter(o=>o.analista===currentUser && o.estado==='PENDIENTE');
+      if(pendAyer.length > 0 && !document.getElementById('banner-ayer')){
+        const banner = document.createElement('div');
+        banner.id = 'banner-ayer';
+        banner.style.cssText = 'background:#FAEEDA;border:1.5px solid #BA7517;border-radius:10px;padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;';
+        banner.innerHTML = '<div style="font-size:13px;font-weight:600;color:#BA7517;">⚠ Tienes <b>'+pendAyer.length+' operaciones pendientes</b> de ayer ('+ayer+')</div>'
+          + '<div style="display:flex;gap:8px;">'
+          + '<button onclick="cargarPendientesAyer(\''+ayer+'\')" style="padding:6px 14px;background:#BA7517;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">Ver pendientes de ayer</button>'
+          + '<button onclick="document.getElementById(\'banner-ayer\').remove()" style="padding:6px 10px;background:transparent;border:1px solid #BA7517;color:#BA7517;border-radius:8px;font-size:12px;cursor:pointer;">Ignorar</button>'
+          + '</div>';
+        cards.parentElement.insertBefore(banner, cards);
+      }
+    }catch(e){}
   }
 
   const myOps = seguimientoOps.filter(o => o.analista === currentUser);
@@ -4314,6 +4335,41 @@ async function loadMiTurno(){
       ${op.estado==='HECHO'?`<button data-uid="${op.uid}" onclick="renderResultadoModal(this.dataset.uid)" style="margin-top:8px;width:100%;padding:8px;border:1px solid var(--gray-line);border-radius:8px;background:${op._resultado?'#e8f5e9':'#fff'};color:${op._resultado?'#27AE60':'var(--navy)'};font-size:12px;font-weight:600;cursor:pointer;">${op._resultado?('✓ '+op._resultado.tipo.charAt(0).toUpperCase()+op._resultado.tipo.slice(1)):'+ Registrar resultado'}</button>`:''}
     </div>`;
   }).join('');
+}
+
+async function cargarPendientesAyer(fecha){
+  try{
+    const r = await store.get('ops:'+fecha);
+    const opsAyer = r&&r.value ? JSON.parse(r.value) : [];
+    const pendAyer = opsAyer.filter(o=>o.analista===currentUser && o.estado==='PENDIENTE');
+    if(!pendAyer.length){ alert('No hay pendientes de ayer para ti.'); return; }
+    // Agregar pendientes de ayer a seguimientoOps si no están ya
+    const uidsActuales = new Set(seguimientoOps.map(o=>o.uid));
+    pendAyer.forEach(function(op){
+      if(!uidsActuales.has(op.uid)){
+        op._de_ayer = true;
+        op._fecha_original = fecha;
+        seguimientoOps.push(op);
+      }
+    });
+    // Cargar resultados de ayer también
+    try{
+      const resAyer = await fbGet('resultados/'+fecha);
+      if(resAyer){
+        seguimientoOps.forEach(function(op){
+          if(op._fecha_original === fecha){
+            const stableKey = (op._id_operacion||op.identificador||op.uid).toString().replace(/[.#$[\]]/g,'_');
+            const resRaw = resAyer[stableKey] || resAyer[op.uid];
+            if(resRaw){ try{ op._resultado = typeof resRaw==='string'?JSON.parse(resRaw):resRaw; }catch(e){} }
+          }
+        });
+      }
+    }catch(e){}
+    document.getElementById('banner-ayer')?.remove();
+    loadMiTurno();
+  }catch(e){
+    alert('Error al cargar pendientes de ayer: '+e.message);
+  }
 }
 
 async function toggleEstadoMiTurno(uid){
