@@ -441,7 +441,10 @@ tr:last-child td{border-bottom:none;}
 
 <div class="page" id="page-historial">
   <div class="panel">
-    <div class="panel-title">Historial de repartos confirmados</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <div class="panel-title" style="margin:0;">Historial de repartos confirmados</div>
+      <button onclick="exportHistorialExcel()" style="font-size:12px;padding:6px 14px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;cursor:pointer;">📥 Exportar Excel</button>
+    </div>
     <div id="hist-body"></div>
   </div>
 </div>
@@ -4153,6 +4156,89 @@ async function loadDashboard(){
 
   }catch(e){
     body.innerHTML = '<div class="empty">Error al cargar dashboard: '+e.message+'</div>';
+  }
+}
+
+async function exportHistorialExcel(){
+  const btn = document.querySelector('[onclick="exportHistorialExcel()"]');
+  if(btn){ btn.textContent='⏳ Generando...'; btn.disabled=true; }
+
+  try{
+    const XLSX = window.XLSX;
+    const wb = XLSX.utils.book_new();
+
+    // Cargar todos los días desde Firebase
+    const data = await fbGet('ops');
+    if(!data){ alert('No hay datos en el historial.'); return; }
+
+    // HOJA 1: Resumen por día
+    const resumen = [['Fecha','Día','Planificadas','Asignadas','HECHO','PENDIENTE','% Cumpl.','Vencidas','Urgentes']];
+    const fechas = Object.keys(data).sort();
+
+    for(const fecha of fechas){
+      let ops = [];
+      try{ ops = typeof data[fecha]==='string'?JSON.parse(data[fecha]):(Array.isArray(data[fecha])?data[fecha]:[]); }catch(e){}
+      const hechas = ops.filter(o=>o.estado==='HECHO').length;
+      const pend = ops.length - hechas;
+      const pct = ops.length>0?Math.round(hechas/ops.length*100):0;
+      const venc = ops.filter(o=>o.estado==='PENDIENTE'&&(o.tier||'').toLowerCase()==='vencido').length;
+      const urg = ops.filter(o=>o.estado==='PENDIENTE'&&(o.tier||'').toLowerCase()==='urgente').length;
+      const dayName = new Date(fecha+'T12:00:00').toLocaleDateString('es-CL',{weekday:'long'});
+      resumen.push([fecha, dayName, ops[0]?.planificado||'-', ops.length, hechas, pend, pct+'%', venc||'-', urg||'-']);
+    }
+
+    const wsResumen = XLSX.utils.aoa_to_sheet(resumen);
+    wsResumen['!cols'] = [{wch:14},{wch:12},{wch:14},{wch:12},{wch:10},{wch:12},{wch:12},{wch:10},{wch:10}];
+    XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen por día');
+
+    // HOJA 2: Detalle de todas las operaciones
+    const detalle = [['Fecha','Producto','Identificador','Analista','Estado','Tier','Resultado','Motivo','Observación','Completado en']];
+
+    // Cargar resultados de todos los días
+    let todosResultados = {};
+    try{
+      const resAll = await fbGet('resultados');
+      if(resAll) todosResultados = resAll;
+    }catch(e){}
+
+    for(const fecha of fechas){
+      let ops = [];
+      try{ ops = typeof data[fecha]==='string'?JSON.parse(data[fecha]):(Array.isArray(data[fecha])?data[fecha]:[]); }catch(e){}
+      const resDelDia = todosResultados[fecha] || {};
+
+      ops.forEach(function(op){
+        // Buscar resultado en ruta separada
+        const stableKey = (op._id_operacion||op.identificador||op.uid||'').toString().replace(/[.#$[\]]/g,'_');
+        const resRaw = resDelDia[stableKey] || resDelDia[op.uid];
+        let resultado = op._resultado || (resRaw ? (typeof resRaw==='string'?JSON.parse(resRaw):resRaw) : null);
+
+        detalle.push([
+          fecha,
+          op.productName||op.productKey||'',
+          op.identificador||op.rut||'',
+          op.analista||'',
+          op.estado||'',
+          op.tier||'normal',
+          resultado?.tipo||'',
+          resultado?.motivo||'',
+          resultado?.obs||'',
+          op.completado_en ? new Date(op.completado_en).toLocaleString('es-CL') : ''
+        ]);
+      });
+    }
+
+    const wsDetalle = XLSX.utils.aoa_to_sheet(detalle);
+    wsDetalle['!cols'] = [{wch:14},{wch:20},{wch:16},{wch:14},{wch:10},{wch:10},{wch:12},{wch:25},{wch:30},{wch:18}];
+    XLSX.utils.book_append_sheet(wb, wsDetalle, 'Detalle operaciones');
+
+    const filename = 'Historial_Creditu_'+new Date().toISOString().slice(0,10)+'.xlsx';
+    XLSX.writeFile(wb, filename);
+
+  }catch(e){
+    console.error('Error Excel historial:', e);
+    alert('Error: '+e.message);
+  }finally{
+    if(btn){ btn.textContent='📥 Exportar Excel'; btn.disabled=false; }
   }
 }
 
