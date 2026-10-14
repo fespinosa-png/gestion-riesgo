@@ -3661,6 +3661,21 @@ async function loadDashboard(){
       }catch(e){}
     }
 
+    // Cargar resultados desde ruta separada y mergear en allOps
+    try{
+      const resAll = await fbGet('resultados');
+      if(resAll){
+        allOps.forEach(function(op){
+          const resDelDia = resAll[op._date];
+          if(!resDelDia) return;
+          if(op._resultado) return; // ya tiene resultado del JSON de ops
+          const stableKey = (op._id_operacion||op.identificador||op.uid||'').toString().replace(/[^a-zA-Z0-9_\-]/g,'_');
+          const resRaw = resDelDia[stableKey] || resDelDia[op.uid];
+          if(resRaw){ try{ op._resultado = typeof resRaw==='string'?JSON.parse(resRaw):resRaw; }catch(e){} }
+        });
+      }
+    }catch(e){ console.warn('No se pudieron cargar resultados en dashboard:', e); }
+
     // Aplicar filtro de analista si está seleccionado
     const filtroAnalista = document.getElementById('db-filter-analista')?.value || '';
     if(filtroAnalista){
