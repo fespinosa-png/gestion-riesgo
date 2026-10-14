@@ -2754,7 +2754,7 @@ async function loadSeguimiento(){
     const resData = await fbGet('resultados/'+currentDate);
     if(resData){
       seguimientoOps.forEach(function(op){
-        const stableKey = (op._id_operacion||op.identificador||op.uid).toString().replace(/[.#$/\[\]]/g,'_');
+        const stableKey = (op._id_operacion||op.identificador||op.uid).toString().replace(/[^a-zA-Z0-9_\-]/g,'_');
         const resRaw = resData[stableKey] || resData[op.uid];
         if(resRaw){ try{ op._resultado = typeof resRaw==='string'?JSON.parse(resRaw):resRaw; }catch(e){} }
       });
@@ -3037,18 +3037,34 @@ async function guardarResultado(uid){
   
   const resultado = {tipo, motivo, obs, fecha: new Date().toISOString(), analista: currentUser||'--'};
   
-  const op = seguimientoOps.find(o=>o.uid===uid);
+  // Buscar op en seguimientoOps O en dayOps (Mi turno usa dayOps)
+  const op = seguimientoOps.find(o=>o.uid===uid) || dayOps.find(o=>o.uid===uid);
+  
   if(op){
     op._resultado = resultado;
+    // Actualizar también en seguimientoOps si existe ahí
+    const segOp = seguimientoOps.find(o=>o.uid===uid);
+    if(segOp) segOp._resultado = resultado;
     saveLocalBackup(seguimientoOps);
-    // Guardar resultado en ruta separada (sin race condition)
+    
+    // Usar fecha original de la op si fue cargada de otro día
+    const fechaOp = op._fecha_original || currentDate;
+    
+    // Clave estable — solo caracteres seguros para Firebase
+    const stableKey = (op._id_operacion||op.identificador||uid).toString().replace(/[^a-zA-Z0-9_\-]/g,'_');
+    
     try{
-      // Usar clave estable (id_operacion o rut) para que persista al reasignar
-      const stableKey = (op._id_operacion||op.identificador||uid).toString().replace(/[.#$/[\]]/g,'_');
-      await fbSet('resultados/'+currentDate+'/'+stableKey, JSON.stringify(resultado));
-      op._stableKey = stableKey;
-    }catch(e){ console.error('Error guardando resultado:', e); }
+      await fbSet('resultados/'+fechaOp+'/'+stableKey, JSON.stringify(resultado));
+    }catch(e){ console.error('Error guardando resultado en Firebase:', e); alert('Error al guardar: '+e.message); return; }
+  } else {
+    // Si no encontramos la op, guardar por uid directamente
+    const fechaOp = currentDate;
+    const stableKey = uid.toString().replace(/[^a-zA-Z0-9_\-]/g,'_');
+    try{
+      await fbSet('resultados/'+fechaOp+'/'+stableKey, JSON.stringify(resultado));
+    }catch(e){ console.error('Error guardando resultado:', e); alert('Error al guardar: '+e.message); return; }
   }
+  
   document.getElementById('resultado-modal-bg')?.remove();
   renderSeguimiento();
   loadMiTurno();
@@ -4208,7 +4224,7 @@ async function exportHistorialExcel(){
 
       ops.forEach(function(op){
         // Buscar resultado en ruta separada
-        const stableKey = (op._id_operacion||op.identificador||op.uid||'').toString().replace(/[.#$[\]]/g,'_');
+        const stableKey = (op._id_operacion||op.identificador||op.uid||'').toString().replace(/[^a-zA-Z0-9_\-]/g,'_');
         const resRaw = resDelDia[stableKey] || resDelDia[op.uid];
         let resultado = op._resultado || (resRaw ? (typeof resRaw==='string'?JSON.parse(resRaw):resRaw) : null);
 
@@ -4444,7 +4460,7 @@ async function cargarPendientesAyer(fecha){
       if(resAyer){
         seguimientoOps.forEach(function(op){
           if(op._fecha_original === fecha){
-            const stableKey = (op._id_operacion||op.identificador||op.uid).toString().replace(/[.#$[\]]/g,'_');
+            const stableKey = (op._id_operacion||op.identificador||op.uid).toString().replace(/[^a-zA-Z0-9_\-]/g,'_');
             const resRaw = resAyer[stableKey] || resAyer[op.uid];
             if(resRaw){ try{ op._resultado = typeof resRaw==='string'?JSON.parse(resRaw):resRaw; }catch(e){} }
           }
@@ -4866,7 +4882,7 @@ async function silentRefreshSeguimiento(){
         const resData = await fbGet('resultados/'+currentDate);
         if(resData){
           seguimientoOps.forEach(function(op){
-            const stableKey = (op._id_operacion||op.identificador||op.uid).toString().replace(/[.#$/\[\]]/g,'_');
+            const stableKey = (op._id_operacion||op.identificador||op.uid).toString().replace(/[^a-zA-Z0-9_\-]/g,'_');
             const resRaw = resData[stableKey] || resData[op.uid];
             if(resRaw){ try{ op._resultado = typeof resRaw==='string'?JSON.parse(resRaw):resRaw; }catch(e){} }
           });
