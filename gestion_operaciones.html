@@ -4024,6 +4024,88 @@ async function loadDashboard(){
       +'</div>'
     ) : '';
 
+    // ── PROYECCIÓN DEL TUBO ──────────────────────────────────────────────────
+    // Calcular promedios desde historial (últimos 10 días hábiles)
+    var tuboActual = pendientesSemana; // pendientes totales del período actual
+    
+    // Recopilar datos históricos de Firebase para proyección
+    var proyHistDias = [];
+    try{
+      const allOpsData = await fbGet('ops');
+      if(allOpsData){
+        const fechasHist = Object.keys(allOpsData).sort().slice(-15); // últimas 15 fechas
+        fechasHist.forEach(function(fecha){
+          let opsH = [];
+          try{ opsH = typeof allOpsData[fecha]==='string'?JSON.parse(allOpsData[fecha]):(Array.isArray(allOpsData[fecha])?allOpsData[fecha]:[]); }catch(e){}
+          if(opsH.length > 0){
+            const dow = new Date(fecha+'T12:00:00').getDay();
+            if(dow>=1 && dow<=5){ // solo días hábiles
+              proyHistDias.push({
+                fecha: fecha,
+                asignadas: opsH.length,
+                hechas: opsH.filter(function(o){ return o.estado==='HECHO'; }).length
+              });
+            }
+          }
+        });
+      }
+    }catch(e){}
+
+    // Calcular promedios (últimos 10 días hábiles con datos)
+    var diasConDatos = proyHistDias.filter(function(d){ return d.asignadas > 0; }).slice(-10);
+    var promedioIngreso = diasConDatos.length > 0 ? Math.round(diasConDatos.reduce(function(s,d){ return s+d.asignadas; },0)/diasConDatos.length) : 120;
+    var promedioResolucion = diasConDatos.length > 0 ? Math.round(diasConDatos.reduce(function(s,d){ return s+d.hechas; },0)/diasConDatos.length) : 96;
+    var flujoNeto = promedioIngreso - promedioResolucion; // positivo = crece el tubo, negativo = se reduce
+
+    // Proyectar 5 días hábiles
+    var proyDias = [];
+    var tuboSim = tuboActual;
+    var hoy = new Date(todayISO()+'T12:00:00');
+    var diasContados = 0;
+    for(var di=1; diasContados<6; di++){
+      var dProy = new Date(hoy);
+      dProy.setDate(hoy.getDate()+di);
+      var dowProy = dProy.getDay();
+      if(dowProy===0||dowProy===6) continue; // saltar fin de semana
+      diasContados++;
+      tuboSim = Math.max(0, tuboSim + flujoNeto);
+      var dayLabel = dProy.toLocaleDateString('es-CL',{weekday:'short',day:'numeric',month:'short'});
+      proyDias.push({label:dayLabel, tubo:tuboSim});
+    }
+
+    // Construir gráfico de proyección
+    var proyBarras = proyDias.map(function(d){
+      var color = d.tubo===0?'#27AE60':d.tubo<100?'#BA7517':'#C0392B';
+      var pct = Math.min(100, Math.round(d.tubo/Math.max(promedioIngreso,1)*100));
+      return '<div style="flex:1;text-align:center;">'
+        + '<div style="font-size:12px;font-weight:700;color:'+(d.tubo===0?'#27AE60':d.tubo<100?'#BA7517':'#C0392B')+';">'+d.tubo+'</div>'
+        + '<div style="height:80px;background:var(--gray-line);border-radius:4px;position:relative;margin:4px 4px;">'
+        + '<div style="position:absolute;bottom:0;left:0;right:0;background:'+color+';height:'+pct+'%;border-radius:4px;transition:height 0.5s;"></div>'
+        + '</div>'
+        + '<div style="font-size:10px;color:var(--gray-text);">'+d.label+'</div>'
+        + '</div>';
+    }).join('');
+
+    var tendenciaTexto = flujoNeto > 5 ? '📈 El tubo crece ~'+flujoNeto+' ops/día' 
+      : flujoNeto < -5 ? '📉 El tubo se reduce ~'+Math.abs(flujoNeto)+' ops/día'
+      : '➡ El tubo se mantiene estable';
+
+    var proyeccionHTML = '<div style="background:#fff;border:1px solid var(--gray-line);border-radius:12px;padding:16px;">'
+      + '<div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:4px;">🔮 Proyección del tubo — próximos 5 días hábiles</div>'
+      + '<div style="font-size:11px;color:var(--gray-text);margin-bottom:12px;">Basado en promedio de los últimos '+diasConDatos.length+' días · Ingreso promedio: '+promedioIngreso+' ops/día · Capacidad promedio: '+promedioResolucion+' ops/día · <b>'+tendenciaTexto+'</b></div>'
+      + '<div style="display:flex;align-items:flex-end;gap:4px;margin-bottom:8px;">'
+      + '<div style="text-align:center;min-width:60px;">'
+      + '<div style="font-size:12px;font-weight:700;color:var(--navy);">'+tuboActual+'</div>'
+      + '<div style="height:80px;background:var(--cyan-light);border:1.5px solid var(--teal);border-radius:4px;position:relative;margin:4px;">'
+      + '<div style="position:absolute;bottom:0;left:0;right:0;background:var(--teal);height:100%;border-radius:3px;"></div>'
+      + '</div>'
+      + '<div style="font-size:10px;color:var(--navy);font-weight:600;">Hoy</div>'
+      + '</div>'
+      + proyBarras
+      + '</div>'
+      + (flujoNeto > 20 ? '<div style="background:#FCEBEB;border-radius:8px;padding:10px;font-size:12px;color:#C0392B;font-weight:600;">⚠ Alerta: el tubo crece más rápido de lo que el equipo puede resolver. Se recomienda refuerzo de capacidad.</div>' : '')
+      + '</div>';
+
     // Riesgo SLA HTML
     const slaVencidas = pendientesPorTier.vencido;
     const slaUrgentes = pendientesPorTier.urgente;
@@ -4099,6 +4181,8 @@ async function loadDashboard(){
       + resultadosHTML
       // IVAN
       + ivanHTML
+      // PROYECCIÓN DEL TUBO
+      + proyeccionHTML
       // TIEMPO DE RESOLUCIÓN
       + tiempoHTML;
 
