@@ -3721,11 +3721,13 @@ async function loadDashboard(){
     // Planificación total de la semana
     let totalPlanificado = 0;
     Object.values(planPorDia).forEach(plan=>{
-      if(plan.vols){
-        Object.values(plan.vols).forEach(v=>{ totalPlanificado += parseInt(v.total||0); });
-      } else if(plan.totalOps){
-        totalPlanificado += plan.totalOps;
+      var planTotal0 = 0;
+      if(plan.vols && Object.keys(plan.vols).length > 0){
+        Object.values(plan.vols).forEach(v=>{ planTotal0 += parseInt(v.total||0); });
       }
+      // Fallback a totalOps si vols está vacío
+      if(planTotal0 === 0 && plan.totalOps) planTotal0 = plan.totalOps;
+      totalPlanificado += planTotal0;
     });
 
     // Por analista
@@ -3751,8 +3753,10 @@ async function loadDashboard(){
     Object.entries(planPorDia).forEach(([date, plan])=>{
       if(porDia[date]){
         let planTotal = 0;
-        if(plan.vols) Object.values(plan.vols).forEach(v=>{ planTotal+=parseInt(v.total||0); });
-        else planTotal = plan.totalOps||0;
+        if(plan.vols && Object.keys(plan.vols).length > 0){
+          Object.values(plan.vols).forEach(v=>{ planTotal+=parseInt(v.total||0); });
+        }
+        if(planTotal === 0) planTotal = plan.totalOps||0;
         porDia[date].planificado = planTotal;
       }
     });
