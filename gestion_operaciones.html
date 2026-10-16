@@ -239,9 +239,9 @@ tr:last-child td{border-bottom:none;}
     <div class="flex-between" style="margin-bottom:14px;">
       <div class="panel-title" style="margin-bottom:0;">Día de operación</div>
       <div class="daytoggle" style="margin-bottom:0;max-width:500px;">
-        <button id="btn-lj" class="active" onclick="setDayType('LJ')">Lunes-Jueves · 21 ops</button>
-        <button id="btn-v" onclick="setDayType('V')">Viernes · 16 ops</button>
-        <button id="btn-fds" onclick="setDayType('FDS')">Fin de semana · 16 ops</button>
+        <button id="btn-lj" class="active" onclick="setDayType('LJ')">Lunes-Jueves · <span id="cap-lj-lbl"></span> ops</button>
+        <button id="btn-v" onclick="setDayType('V')">Viernes · <span id="cap-v-lbl"></span> ops</button>
+        <button id="btn-fds" onclick="setDayType('FDS')">Fin de semana · <span id="cap-fds-lbl"></span> ops</button>
       </div>
     </div>
     <div class="panel-title" style="margin-bottom:8px;">Disponibilidad del equipo hoy</div>
@@ -255,8 +255,31 @@ tr:last-child td{border-bottom:none;}
     <div class="prod-grid" id="prod-grid"></div>
   </div>
 
+  <!-- Configuración de capacidad por analista -->
+  <div class="panel" style="margin-top:12px;">
+    <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:10px;">⚙ Capacidad por analista (ops/día)</div>
+    <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+      <label style="font-size:12px;color:var(--navy);display:flex;align-items:center;gap:6px;">
+        Lun–Jue:
+        <input type="number" id="cap-lj-input" min="1" max="50" style="width:60px;padding:5px 8px;border:1px solid var(--gray-line);border-radius:6px;font-size:13px;font-weight:700;text-align:center;"
+          onchange="CAPS.LJ=parseInt(this.value)||21;saveCaps();recalcPlan();updateCapLabels();">
+      </label>
+      <label style="font-size:12px;color:var(--navy);display:flex;align-items:center;gap:6px;">
+        Viernes:
+        <input type="number" id="cap-v-input" min="1" max="50" style="width:60px;padding:5px 8px;border:1px solid var(--gray-line);border-radius:6px;font-size:13px;font-weight:700;text-align:center;"
+          onchange="CAPS.V=parseInt(this.value)||16;saveCaps();recalcPlan();updateCapLabels();">
+      </label>
+      <label style="font-size:12px;color:var(--navy);display:flex;align-items:center;gap:6px;">
+        Fin de semana:
+        <input type="number" id="cap-fds-input" min="1" max="50" style="width:60px;padding:5px 8px;border:1px solid var(--gray-line);border-radius:6px;font-size:13px;font-weight:700;text-align:center;"
+          onchange="CAPS.FDS=parseInt(this.value)||16;saveCaps();recalcPlan();updateCapLabels();">
+      </label>
+      <span style="font-size:11px;color:var(--gray-text);">Los cambios se guardan automáticamente</span>
+    </div>
+  </div>
   <div class="stats-row" id="stats-row"></div>
   <div id="alert-wrap"></div>
+  <div id="plan-firebase-status" style="margin-top:10px;"></div>
 
   <div class="panel">
     <div class="panel-title">Distribución sugerida por analista</div>
@@ -1070,7 +1093,20 @@ var TEAM = [
   {name:'Andrea',    products:['brasil'],                    role:'Analista Brasil', reserve:false},
 ];
 var JEFE = 'Jefe de Riesgo';
-var CAPS = {LJ:21, V:16, FDS:16};
+var CAPS = {
+  LJ:  parseInt(localStorage.getItem('caps_lj')  || '21'),
+  V:   parseInt(localStorage.getItem('caps_v')   || '16'),
+  FDS: parseInt(localStorage.getItem('caps_fds') || '16')
+};
+function saveCaps(){ localStorage.setItem('caps_lj', CAPS.LJ); localStorage.setItem('caps_v', CAPS.V); localStorage.setItem('caps_fds', CAPS.FDS); }
+function updateCapLabels(){
+  var ljLbl = document.getElementById('cap-lj-lbl'); if(ljLbl) ljLbl.textContent = CAPS.LJ;
+  var vLbl = document.getElementById('cap-v-lbl'); if(vLbl) vLbl.textContent = CAPS.V;
+  var fdsLbl = document.getElementById('cap-fds-lbl'); if(fdsLbl) fdsLbl.textContent = CAPS.FDS;
+  var ljIn = document.getElementById('cap-lj-input'); if(ljIn) ljIn.value = CAPS.LJ;
+  var vIn = document.getElementById('cap-v-input'); if(vIn) vIn.value = CAPS.V;
+  var fdsIn = document.getElementById('cap-fds-input'); if(fdsIn) fdsIn.value = CAPS.FDS;
+}
 var BRASIL_ANALYSTS = ['Andrea'];
 var CHILE_ANALYSTS = TEAM.filter(t=>!t.products.includes('brasil')).map(t=>t.name);
 
@@ -1734,6 +1770,36 @@ function updateConfirmDateLabel(){
   const input = document.getElementById('confirm-date-input');
   if(input && !input.value) input.value = currentDate;
   else if(input) currentDate = input.value;
+  // Verificar si la planificación del día está guardada en Firebase
+  checkPlanFirebaseStatus();
+}
+
+async function checkPlanFirebaseStatus(){
+  const el = document.getElementById('plan-firebase-status');
+  if(!el) return;
+  el.innerHTML = '<span style="font-size:11px;color:var(--gray-text);">⏳ Verificando estado en Firebase...</span>';
+  try{
+    const data = await fbGet('planificacion/'+currentDate);
+    if(data){
+      const plan = typeof data==='string'?JSON.parse(data):data;
+      const tieneVols = plan.vols && Object.keys(plan.vols).length > 0;
+      let totalPlan = 0;
+      if(tieneVols) Object.values(plan.vols).forEach(function(v){ totalPlan+=parseInt(v.total||0); });
+      if(totalPlan===0 && plan.totalOps) totalPlan = plan.totalOps;
+      const hora = plan.confirmedAt ? new Date(plan.confirmedAt).toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'}) : '--';
+      el.innerHTML = '<div style="background:#e8f5e9;border:1px solid #27AE60;border-radius:8px;padding:8px 12px;font-size:12px;display:flex;align-items:center;gap:8px;">'
+        + '<span style="color:#27AE60;font-weight:700;">✅ Planificación guardada en Firebase</span>'
+        + '<span style="color:var(--gray-text);">· '+totalPlan+' ops · Confirmado a las '+hora+'</span>'
+        + '</div>';
+    } else {
+      el.innerHTML = '<div style="background:#FAEEDA;border:1px solid #BA7517;border-radius:8px;padding:8px 12px;font-size:12px;display:flex;align-items:center;gap:8px;">'
+        + '<span style="color:#BA7517;font-weight:700;">⚠ Planificación de hoy aún no guardada en Firebase</span>'
+        + '<span style="color:var(--gray-text);">· Se guarda al confirmar el reparto</span>'
+        + '</div>';
+    }
+  }catch(e){
+    el.innerHTML = '<span style="font-size:11px;color:var(--gray-text);">No se pudo verificar el estado</span>';
+  }
 }
 
 // ─── USER ───────────────────────────────────────────────────────────────────
@@ -2116,6 +2182,7 @@ function buildOpsEntry(){
               <thead><tr>
                 <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--gray-line);color:var(--gray-text);">Producto</th>
                 <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--gray-line);color:var(--gray-text);">Identificador</th>
+                <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--gray-line);color:var(--gray-text);">Origen</th>
                 <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--gray-line);color:var(--gray-text);">Urgencia</th>
                 <th style="text-align:left;padding:6px 8px;border-bottom:1px solid var(--gray-line);color:var(--gray-text);">Reasignar</th>
                 <th style="padding:6px 8px;border-bottom:1px solid var(--gray-line);"></th>
@@ -2132,9 +2199,15 @@ function buildOpsEntry(){
                     const avail = availability[t.name];
                     return `<option value="${t.name}" ${op.analista===t.name?'selected':''} ${!avail&&op.analista!==t.name?'disabled':''}>${t.name}${t.reserve?' (Reserva)':''}${!avail?' -- ausente':''}</option>`;
                   }).join('');
+                  const origenBadge = op._derivar_ivan
+                    ? '<span style="background:#F3E5F5;color:#8E44AD;font-size:9px;font-weight:700;padding:2px 6px;border-radius:8px;border:1px solid #CE93D8;">🤖 Iván IA</span>'
+                    : op._reingreso
+                    ? '<span style="background:#EDE7F6;color:#6A1B9A;font-size:9px;font-weight:700;padding:2px 6px;border-radius:8px;">🔁 Reingreso</span>'
+                    : '—';
                   return `<tr style="border-bottom:1px solid var(--gray-line);">
                     <td style="padding:7px 8px;">${p.name} <span class="role-badge ${p.key==='brasil'?'brasil':''}">${p.idType}</span></td>
                     <td style="padding:7px 8px;"><input type="text" value="${op.identificador||''}" placeholder="Se completa después" oninput="updateOp('${op.uid}','identificador',this.value)" style="border:none;border-bottom:1px dashed var(--gray-line);background:transparent;font-size:12px;width:140px;outline:none;padding:1px 2px;"></td>
+                    <td style="padding:7px 8px;">${origenBadge}</td>
                     <td style="padding:7px 8px;"><select onchange="updateOp('${op.uid}','tier',this.value);buildOpsEntry();" style="font-size:11px;padding:3px 5px;border:1px solid var(--gray-line);border-radius:6px;background:#fff;"><option value="normal" ${op.tier==='normal'?'selected':''}>Normal</option><option value="urgente" ${op.tier==='urgente'?'selected':''}>⚡ Urgente</option><option value="vencido" ${op.tier==='vencido'?'selected':''}>🔴 Vencida</option></select></td>
                     <td style="padding:7px 8px;"><select onchange="updateOp('${op.uid}','analista',this.value);buildOpsEntry();" style="font-size:12px;padding:4px 6px;border:1px solid var(--gray-line);border-radius:6px;"><option value="">Sin asignar</option>${opts}</select></td>
                     <td style="padding:7px 8px;"><button class="rm" onclick="removeOpAndRefresh('${op.uid}')">✕</button></td>
@@ -2142,6 +2215,12 @@ function buildOpsEntry(){
                 }).join('')}
               </tbody>
             </table>
+            <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+              ${t ? t.products.filter(k=>k!=='brasil').map(k=>{
+                const prod = PRODUCTS.find(x=>x.key===k);
+                return prod ? `<button class="add-op-btn" style="font-size:11px;padding:4px 10px;" onclick="addOpForAnalyst('${analista}','${k}')">+ ${prod.name}</button>` : '';
+              }).join('') : ''}
+            </div>
             <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
               ${PRODUCTS.filter(p=>p.key!=='brasil'||analista==='Andrea').map(p=>`
                 <button class="add-op-btn" style="width:auto;flex:none;" onclick="addOp('${p.key}','${analista}')">+ ${p.name}</button>
@@ -2257,6 +2336,15 @@ function addOp(productKey){
   list.appendChild(div.firstElementChild);
   document.getElementById('count-'+productKey).textContent=dayOps.filter(o=>o.productKey===productKey).length+' operaciones cargadas';
   saveDraft();
+}
+
+function addOpForAnalyst(analista, productKey){
+  const p = PRODUCTS.find(x=>x.key===productKey);
+  if(!p) return;
+  const op = {uid:uid(), productKey, productName:p.name, identificador:'', analista:analista, estado:'PENDIENTE', tier:'normal', fecha_riesgo:'', obs:'', obs_seguimiento:'', asignado_en:new Date().toISOString(), completado_en:null};
+  dayOps.push(op);
+  saveDraft();
+  buildOpsEntry();
 }
 
 function autoAssign(productKey){
@@ -2414,6 +2502,11 @@ async function cargarDesdeMaestro(){
       return b.horas_habiles - a.horas_habiles;
     });
 
+    // Detectar reingresos del mismo día: RUTs ya marcados HECHO hoy en Firebase
+    const hechosHoy = seguimientoOps.filter(o=>o.estado==='HECHO');
+    const rutsHechosHoy = new Set(hechosHoy.map(o=>(o.identificador||'').replace(/[\.\-\s]/g,'').toLowerCase()).filter(Boolean));
+    const idsHechosHoy = new Set(hechosHoy.map(o=>o._id_operacion).filter(Boolean));
+
     // Mapear a objetos dayOps — detectar duplicados y preguntar
     const existingIds = new Set(dayOps.map(o=>o.identificador));
     const existingIdOps = new Set(dayOps.map(o=>o._id_operacion).filter(Boolean));
@@ -2431,10 +2524,20 @@ async function cargarDesdeMaestro(){
     const ru = ops.filter(o=>o.tier==='urgente').length;
     const rnr = ops.filter(o=>o.tier==='normal'&&!esGenPrev(o)).length;
     const rng = ops.filter(o=>o.tier==='normal'&&esGenPrev(o)).length;
+    // Detectar reingresos del mismo día
+    const reingresos = ops.filter(function(op){
+      const rutNorm = (op.rut||'').replace(/[\.\-\s]/g,'').toLowerCase();
+      return rutsHechosHoy.has(rutNorm) || idsHechosHoy.has(op.id_operacion);
+    });
+    const opsNuevas = ops.filter(function(op){
+      const rutNorm = (op.rut||'').replace(/[\.\-\s]/g,'').toLowerCase();
+      return !rutsHechosHoy.has(rutNorm) && !idsHechosHoy.has(op.id_operacion);
+    });
     const okPrev = window.confirm(
       'Se encontraron '+ops.length+' operaciones MHE pendientes:'+
       '\nVencidas: '+rv+' | Urgentes: '+ru+
       '\nNormales analista real: '+rnr+' | Normales producdigital: '+rng+
+      (reingresos.length > 0 ? '\n🔁 Reingresos del mismo día (ya evaluadas hoy): '+reingresos.length : '')+
       '\n\nCapacidad MHE disponible: '+capacidadRestante+' ops'+
       '\n\nAceptar = cargar | Cancelar = no cargar'
     );
@@ -2448,9 +2551,37 @@ async function cargarDesdeMaestro(){
 
     let nuevas = 0;
     ops.forEach(op=>{
-      const rutNorm = op.rut.replace(/[\.\-\s]/g,'').toLowerCase();
+      const rutNorm = (op.rut||'').replace(/[\.\-\s]/g,'').toLowerCase();
       const rutExists = [...existingIds].some(id=>(id||'').replace(/[\.\-\s]/g,'').toLowerCase()===rutNorm);
       if(rutExists || existingIdOps.has(op.id_operacion)) return;
+
+      // Reingreso del mismo día — marcar como HECHO automáticamente con badge
+      const esReingreso = rutsHechosHoy.has(rutNorm) || idsHechosHoy.has(op.id_operacion);
+      if(esReingreso){
+        const productKey = op.segmento === 'Primera Vivienda' ? 'pv' : 'subsidio';
+        const p = PRODUCTS.find(x=>x.key===productKey) || {name:op.segmento, key:productKey};
+        const opReingreso = {
+          uid: 'op-'+Date.now()+'-'+Math.random(),
+          productKey: productKey,
+          productName: p ? p.name : op.segmento,
+          identificador: op.rut,
+          analista: hechosHoy.find(o=>(o.identificador||'').replace(/[\.\-\s]/g,'').toLowerCase()===rutNorm)?.analista || currentUser,
+          tier: op.tier,
+          estado: 'HECHO',
+          completado_en: new Date().toISOString(),
+          obs_seguimiento: '',
+          asignado_en: new Date().toISOString(),
+          confirmedBy: currentUser,
+          _id_operacion: op.id_operacion,
+          _categoria_sla: op.categoria_sla||'Inmediata',
+          _derivar_ivan: op.derivar_ivan||false,
+          _reingreso: true
+        };
+        dayOps.push(opReingreso);
+        existingIds.add(op.rut);
+        existingIdOps.add(op.id_operacion);
+        return;
+      }
       // Limitar normales de genéricos a la capacidad restante del equipo
       if(op.tier==='normal' && esGenerico(op) && nuevas >= capacidadRestante){
         return; // no cargar más normales de producdigitalriesgo que los que caben
@@ -2639,13 +2770,17 @@ async function confirmDay(){
     // Guardar planificación del día en Firebase para el Dashboard
     setTimeout(async()=>{
       try{
+        const availSaved = localStorage.getItem('avail:'+currentDate);
+        const availObj = availSaved ? JSON.parse(availSaved) : {};
+        const activeAnalistas = TEAM.filter(function(t){ return !t.reserve && availObj[t.name] !== false; }).length;
         const planData = {
           date: currentDate,
           dayType: dayType,
           confirmedBy: currentUser||'--',
           confirmedAt: new Date().toISOString(),
           totalOps: dayOps.length,
-          vols: planVols
+          vols: planVols,
+          teamSize: activeAnalistas
         };
         await fbSet('planificacion/'+currentDate, JSON.stringify(planData));
       }catch(e){ console.warn('No se pudo guardar planificación en Firebase:', e); }
@@ -2676,13 +2811,17 @@ async function confirmDay(){
     // Guardar planificación del día en Firebase para el Dashboard
     setTimeout(async()=>{
       try{
+        const availSaved = localStorage.getItem('avail:'+currentDate);
+        const availObj = availSaved ? JSON.parse(availSaved) : {};
+        const activeAnalistas = TEAM.filter(function(t){ return !t.reserve && availObj[t.name] !== false; }).length;
         const planData = {
           date: currentDate,
           dayType: dayType,
           confirmedBy: currentUser||'--',
           confirmedAt: new Date().toISOString(),
           totalOps: dayOps.length,
-          vols: planVols
+          vols: planVols,
+          teamSize: activeAnalistas
         };
         await fbSet('planificacion/'+currentDate, JSON.stringify(planData));
       }catch(e){ console.warn('No se pudo guardar planificación en Firebase:', e); }
@@ -2860,6 +2999,7 @@ function renderSeguimiento(){
         ${op.identificador||'--'}
         ${op._isDup?'<div class="dup-warning"> Repetido</div>':''}
         ${op._needs_review?'<div style="font-size:10px;color:var(--magenta);font-weight:700;">⚠ Revisar asignacion</div>':''}
+        ${op._reingreso?'<div style="font-size:10px;font-weight:700;color:#8E44AD;">🔁 Reingreso — ya evaluada hoy</div>':''}
         ${op._categoria_sla?`<span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:${(op._categoria_sla||'').includes('Pre')?'#FFF3CD':'#E0F3F5'};color:${(op._categoria_sla||'').includes('Pre')?'#BA7517':'#00808F'}">${(op._categoria_sla||'').includes('Pre')?'🔶 Pre Apr.':'🔷 Inm.'}</span>`:''}
       </td>
       <td style="text-align:center;">${op._derivar_ivan?'<span style="display:inline-block;background:#F3E5F5;color:#8E44AD;font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;border:1px solid #CE93D8;">🤖 Iván IA</span>':'<span style="font-size:11px;color:var(--gray-text);">—</span>'}</td>
@@ -4044,10 +4184,12 @@ async function loadDashboard(){
           if(opsH.length > 0){
             const dow = new Date(fecha+'T12:00:00').getDay();
             if(dow>=1 && dow<=5){ // solo días hábiles
+              var tsHist = planPorDia[fecha] ? (planPorDia[fecha].teamSize||0) : 0;
               proyHistDias.push({
                 fecha: fecha,
                 asignadas: opsH.length,
-                hechas: opsH.filter(function(o){ return o.estado==='HECHO'; }).length
+                hechas: opsH.filter(function(o){ return o.estado==='HECHO'; }).length,
+                teamSize: tsHist
               });
             }
           }
@@ -4059,9 +4201,23 @@ async function loadDashboard(){
     var diasConDatos = proyHistDias.filter(function(d){ return d.asignadas > 0; }).slice(-10);
     var promedioIngreso = diasConDatos.length > 0 ? Math.round(diasConDatos.reduce(function(s,d){ return s+d.asignadas; },0)/diasConDatos.length) : 120;
     var promedioResolucion = diasConDatos.length > 0 ? Math.round(diasConDatos.reduce(function(s,d){ return s+d.hechas; },0)/diasConDatos.length) : 96;
-    var flujoNeto = promedioIngreso - promedioResolucion; // positivo = crece el tubo, negativo = se reduce
 
-    // Proyectar 5 días hábiles
+    // Calcular capacidad por analista usando teamSize histórico
+    var diasConTeam = diasConDatos.filter(function(d){ return d.teamSize > 0; });
+    var promedioTeamSize = diasConTeam.length > 0 ? diasConTeam.reduce(function(s,d){ return s+d.teamSize; },0)/diasConTeam.length : 5;
+    var capacidadPorAnalista = promedioTeamSize > 0 ? promedioResolucion / promedioTeamSize : 20;
+
+    // Obtener teamSize del día actual de Firebase
+    var teamSizeHoy = 0;
+    try{
+      var planHoy = await fbGet('planificacion/'+currentDate);
+      if(planHoy){ var ph = typeof planHoy==='string'?JSON.parse(planHoy):planHoy; teamSizeHoy = ph.teamSize||0; }
+    }catch(e){}
+    if(teamSizeHoy === 0) teamSizeHoy = Math.round(promedioTeamSize);
+
+    var flujoNeto = promedioIngreso - promedioResolucion;
+
+    // Proyectar 5 días hábiles usando capacidad por analista
     var proyDias = [];
     var tuboSim = tuboActual;
     var hoy = new Date(todayISO()+'T12:00:00');
@@ -4070,11 +4226,14 @@ async function loadDashboard(){
       var dProy = new Date(hoy);
       dProy.setDate(hoy.getDate()+di);
       var dowProy = dProy.getDay();
-      if(dowProy===0||dowProy===6) continue; // saltar fin de semana
+      if(dowProy===0||dowProy===6) continue;
       diasContados++;
-      tuboSim = Math.max(0, tuboSim + flujoNeto);
+      // Usar capacidad del equipo actual (teamSizeHoy) para proyección
+      var capacidadDia = Math.round(capacidadPorAnalista * teamSizeHoy);
+      var flujoNetoDia = promedioIngreso - capacidadDia;
+      tuboSim = Math.max(0, tuboSim + flujoNetoDia);
       var dayLabel = dProy.toLocaleDateString('es-CL',{weekday:'short',day:'numeric',month:'short'});
-      proyDias.push({label:dayLabel, tubo:tuboSim});
+      proyDias.push({label:dayLabel, tubo:tuboSim, teamSize:teamSizeHoy, capacidad:capacidadDia});
     }
 
     // Construir gráfico de proyección
@@ -4096,7 +4255,7 @@ async function loadDashboard(){
 
     var proyeccionHTML = '<div style="background:#fff;border:1px solid var(--gray-line);border-radius:12px;padding:16px;">'
       + '<div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:4px;">🔮 Proyección del tubo — próximos 5 días hábiles</div>'
-      + '<div style="font-size:11px;color:var(--gray-text);margin-bottom:12px;">Basado en promedio de los últimos '+diasConDatos.length+' días · Ingreso promedio: '+promedioIngreso+' ops/día · Capacidad promedio: '+promedioResolucion+' ops/día · <b>'+tendenciaTexto+'</b></div>'
+      + '<div style="font-size:11px;color:var(--gray-text);margin-bottom:12px;">Basado en '+diasConDatos.length+' días históricos · Ingreso promedio: '+promedioIngreso+' ops/día · Equipo hoy: '+teamSizeHoy+' analistas · Capacidad estimada: '+Math.round(capacidadPorAnalista*teamSizeHoy)+' ops/día (~'+Math.round(capacidadPorAnalista)+' por analista) · <b>'+tendenciaTexto+'</b></div>'
       + '<div style="display:flex;align-items:flex-end;gap:4px;margin-bottom:8px;">'
       + '<div style="text-align:center;min-width:60px;">'
       + '<div style="font-size:12px;font-weight:700;color:var(--navy);">'+tuboActual+'</div>'
@@ -4263,7 +4422,17 @@ async function loadDashboard(){
         var tuboLabels = weekDays.map(function(d){ return new Date(d+'T12:00:00').toLocaleDateString('es-CL',{weekday:'short',day:'numeric'}); });
         var tuboData = weekDays.map(function(d){ return (porDia[d]||{total:0}).total; });
         var completadasData = weekDays.map(function(d){ return (porDia[d]||{hechas:0}).hechas; });
-        var planData = weekDays.map(function(d){ return (porDia[d]||{planificado:0}).planificado||null; });
+        var planData = weekDays.map(function(d){
+          // Leer directamente de planPorDia para asegurar que los datos estén disponibles
+          var plan = planPorDia[d];
+          if(!plan) return null;
+          var total = 0;
+          if(plan.vols && Object.keys(plan.vols).length > 0){
+            Object.values(plan.vols).forEach(function(v){ total += parseInt(v.total||0); });
+          }
+          if(total === 0 && plan.totalOps) total = plan.totalOps;
+          return total > 0 ? total : null;
+        });
         var ctxPlan=document.getElementById('chart-donut-plan');
         if(ctxPlan){
           new Chart(ctxPlan,{type:'line',data:{
@@ -4908,7 +5077,7 @@ initAvailability();
 buildProdGrid();
 // Cargar equipo desde GS (configuracion persistente)
 initFirebaseAuth();
-loadTeamFromGS().then(()=>{ renderEquipo(); initUserSelect(); });
+loadTeamFromGS().then(()=>{ renderEquipo(); initUserSelect(); updateCapLabels(); });
 // Auto-detectar tipo de día, luego restaurar planificación guardada si existe
 dayType = autoDetectDayType();
 recalcPlan();
