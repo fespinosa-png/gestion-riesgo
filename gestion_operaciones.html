@@ -2216,10 +2216,9 @@ function buildOpsEntry(){
               </tbody>
             </table>
             <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
-              ${t ? t.products.filter(k=>k!=='brasil').map(k=>{
-                const prod = PRODUCTS.find(x=>x.key===k);
-                return prod ? `<button class="add-op-btn" style="font-size:11px;padding:4px 10px;" onclick="addOpForAnalyst('${analista}','${k}')">+ ${prod.name}</button>` : '';
-              }).join('') : ''}
+              ${PRODUCTS.map(prod=>{
+                return `<button class="add-op-btn" style="font-size:11px;padding:4px 10px;" onclick="addOpForAnalyst('${analista}','${prod.key}')">+ ${prod.name}</button>`;
+              }).join('')}
             </div>
             <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
               ${PRODUCTS.filter(p=>p.key!=='brasil'||analista==='Andrea').map(p=>`
@@ -2344,6 +2343,7 @@ function addOpForAnalyst(analista, productKey){
   const op = {uid:uid(), productKey, productName:p.name, identificador:'', analista:analista, estado:'PENDIENTE', tier:'normal', fecha_riesgo:'', obs:'', obs_seguimiento:'', asignado_en:new Date().toISOString(), completado_en:null};
   dayOps.push(op);
   saveDraft();
+  window._opsViewMode = 'analyst'; // mantener vista por analista
   buildOpsEntry();
 }
 
