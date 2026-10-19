@@ -2217,7 +2217,7 @@ function buildOpsEntry(){
             </table>
             <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
               ${PRODUCTS.map(prod=>{
-                return `<button class="add-op-btn" style="font-size:11px;padding:4px 10px;" onclick="addOpForAnalyst('${analista}','${prod.key}')">+ ${prod.name}</button>`;
+                return `<button class="add-op-btn" style="font-size:11px;padding:4px 10px;width:auto;flex:none;" onclick="addOpForAnalyst('${analista}','${prod.key}')">+ ${prod.name}</button>`;
               }).join('')}
             </div>
           </div>`;
