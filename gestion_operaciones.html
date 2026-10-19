@@ -2220,21 +2220,10 @@ function buildOpsEntry(){
                 return `<button class="add-op-btn" style="font-size:11px;padding:4px 10px;" onclick="addOpForAnalyst('${analista}','${prod.key}')">+ ${prod.name}</button>`;
               }).join('')}
             </div>
-            <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
-              ${PRODUCTS.filter(p=>p.key!=='brasil'||analista==='Andrea').map(p=>`
-                <button class="add-op-btn" style="width:auto;flex:none;" onclick="addOp('${p.key}','${analista}')">+ ${p.name}</button>
-              `).join('')}
-            </div>
           </div>`;
       }).join('');
     }
-    // Also show product panels for adding new ops (always show)
-    body += `<div class="op-entry-panel" style="margin-bottom:14px;border-color:var(--cyan);">
-      <div class="prod-header"><span class="prod-name" style="color:var(--teal);">Agregar operaciones por producto</span></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        ${PRODUCTS.map(p=>`<button class="add-op-btn" style="width:auto;flex:none;" onclick="addOp('${p.key}')">+ ${p.name} (${p.idType})</button>`).join('')}
-      </div>
-    </div>`;
+
   }
 
   container.innerHTML = header + body;
