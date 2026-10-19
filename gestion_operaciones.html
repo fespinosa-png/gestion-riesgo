@@ -3846,6 +3846,11 @@ async function loadDashboard(){
       const prod = op.productName||op.productKey||'Otro';
       pendientesPorProducto[prod] = (pendientesPorProducto[prod]||0) + 1;
     });
+    const completadasPorProducto = {};
+    allOps.filter(o=>o.estado==='HECHO').forEach(op=>{
+      const prod = op.productName||op.productKey||'Otro';
+      completadasPorProducto[prod] = (completadasPorProducto[prod]||0) + 1;
+    });
 
     // Planificación total de la semana
     let totalPlanificado = 0;
@@ -4291,7 +4296,7 @@ async function loadDashboard(){
       + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;">'
       + '<div style="background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-donut-avance" height="160"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:6px;">HECHO vs PENDIENTE</div></div>'
       + '<div style="background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-donut-urgencia" height="160"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:6px;">PENDIENTES POR URGENCIA</div></div>'
-      + '<div style="background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-donut-producto" height="160"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:6px;">DISTRIBUCIÓN POR PRODUCTO</div></div>'
+      + '<div style="background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-donut-producto" height="160"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:6px;">COMPLETADAS POR PRODUCTO</div></div>'
       + '</div>'
       + '<div style="margin-top:12px;background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-bar-diario" height="80"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:4px;">EVOLUCIÓN DIARIA</div></div>'
       + '<div style="margin-top:12px;background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-bar-analistas" height="80"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:4px;">CUMPLIMIENTO POR ANALISTA</div></div>'
@@ -4367,12 +4372,12 @@ async function loadDashboard(){
         }}});
 
         // 3. Donut por producto
-        const prodLabels = Object.keys(pendientesPorProducto);
+        const prodLabels = Object.keys(completadasPorProducto);
         const prodColors = [TEAL,'#00CCD1','#27AE60',AMBER,RED,'#8E44AD'];
         const ctxProd = document.getElementById('chart-donut-producto');
         if(ctxProd) new Chart(ctxProd,{type:'doughnut',data:{
           labels: prodLabels.length ? prodLabels : ['Sin datos'],
-          datasets:[{data: prodLabels.length ? Object.values(pendientesPorProducto) : [1],backgroundColor:prodColors,borderWidth:0}]
+          datasets:[{data: prodLabels.length ? Object.values(completadasPorProducto) : [1],backgroundColor:prodColors,borderWidth:0}]
         },options:{...chartDefaults,cutout:'70%',plugins:{...chartDefaults.plugins,
           legend:{display:true,position:'bottom',labels:{color:'#AABBD0',font:{size:10}}}
         }}});
