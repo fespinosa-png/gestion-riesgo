@@ -3772,7 +3772,7 @@ async function loadDashboard(){
     }
 
     // Cargar ops y planificación de todos los días desde Firebase
-    const allOps = [];
+    let allOps = [];
     const planPorDia = {};
     for(const date of weekDays){
       try{
