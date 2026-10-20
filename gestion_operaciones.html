@@ -1952,21 +1952,39 @@ function savePlanVolsFromMemory(){
 function loadPlanConfig(){
   try{
     const saved=localStorage.getItem('plan:'+currentDate);
-    if(!saved) return false;
-    const cfg=JSON.parse(saved);
-    if(cfg.dayType) dayType=cfg.dayType;
-    if(cfg.vols){
-      // Guardar en memoria primero
-      planVols = cfg.vols;
-      // Actualizar DOM si los elementos existen
-      Object.entries(cfg.vols).forEach(([key,v])=>{
-        const tv=document.getElementById('vol-'+key);
-        const tu=document.getElementById('urg-'+key);
-        if(tv) tv.value=v.total||0;
-        if(tu) tu.value=v.urgent||0;
-      });
+    if(saved){
+      const cfg=JSON.parse(saved);
+      if(cfg.dayType) dayType=cfg.dayType;
+      if(cfg.vols && Object.keys(cfg.vols).length > 0){
+        planVols = cfg.vols;
+        Object.entries(cfg.vols).forEach(([key,v])=>{
+          const tv=document.getElementById('vol-'+key);
+          const tu=document.getElementById('urg-'+key);
+          if(tv) tv.value=v.total||0;
+          if(tu) tu.value=v.urgent||0;
+        });
+        return true;
+      }
     }
-    return true;
+    // Fallback: cargar vols desde Firebase si localStorage está vacío
+    fbGet('planificacion/'+currentDate).then(function(data){
+      if(!data) return;
+      const plan = typeof data==='string'?JSON.parse(data):data;
+      if(plan.dayType) dayType=plan.dayType;
+      if(plan.vols && Object.keys(plan.vols).length > 0){
+        planVols = plan.vols;
+        Object.entries(plan.vols).forEach(([key,v])=>{
+          const tv=document.getElementById('vol-'+key);
+          const tu=document.getElementById('urg-'+key);
+          if(tv) tv.value=v.total||0;
+          if(tu) tu.value=v.urgent||0;
+        });
+        recalcPlan();
+        // Guardar en localStorage para próximas cargas
+        localStorage.setItem('plan:'+currentDate, JSON.stringify({dayType:plan.dayType, vols:plan.vols}));
+      }
+    }).catch(function(){});
+    return false;
   }catch(e){ return false; }
 }
 
