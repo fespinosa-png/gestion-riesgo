@@ -298,7 +298,11 @@ tr:last-child td{border-bottom:none;}
   <div class="panel">
     <div class="flex-between" style="margin-bottom:12px;">
       <div class="panel-title" style="margin-bottom:0;">Cargar operaciones del día</div>
-      <span class="hint" style="margin:0;">Ingresa RUT, ID o CPF de cada operación. El sistema asigna automáticamente; puedes cambiar la asignación.</span>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end;">
+        <button class="btn-secondary" onclick="abrirVerificadorUrgencias()" style="font-size:12px;padding:6px 12px;">🚨 Verificar urgencias</button>
+        <button class="btn-secondary" onclick="abrirCargaRapida()" style="font-size:12px;padding:6px 12px;">⚡ Carga rápida</button>
+        <span class="hint" style="margin:0;">Ingresa RUT, ID o CPF de cada operación. El sistema asigna automáticamente; puedes cambiar la asignación.</span>
+      </div>
     </div>
     <div id="draft-badge" style="display:none;background:var(--amber-light);color:var(--amber);border:1px solid var(--amber);border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;margin-bottom:14px;align-items:center;gap:8px;justify-content:space-between;">
       <span id="draft-badge-text"></span>
@@ -334,6 +338,8 @@ tr:last-child td{border-bottom:none;}
       <div class="panel-title" style="margin-bottom:0;">Seguimiento del día</div>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
         <span id="refresh-badge" style="font-size:11px;color:var(--gray-text);"></span>
+        <button class="btn-secondary" onclick="abrirVerificadorUrgencias()" style="font-size:12px;padding:6px 12px;">🚨 Verificar urgencias</button>
+        <button class="btn-secondary" onclick="abrirCargaRapida()" style="font-size:12px;padding:6px 12px;">⚡ Carga rápida</button>
         <button class="btn-secondary" onclick="generarResumenCierre()" style="font-size:12px;padding:6px 12px;">📊 Resumen del día</button>
       </div>
     </div>
@@ -1674,10 +1680,20 @@ function loadAvailability(){
     const saved = localStorage.getItem('avail:'+currentDate);
     if(saved){
       const parsed = JSON.parse(saved);
-      // Solo restaurar si tiene entradas válidas del equipo actual
       if(TEAM.some(t=>t.name in parsed)){ Object.assign(availability, parsed); return true; }
     }
   } catch(e){}
+  // Fallback: cargar desde Firebase si localStorage está vacío
+  fbGet('planificacion/'+currentDate).then(function(data){
+    if(!data) return;
+    const plan = typeof data==='string'?JSON.parse(data):data;
+    if(plan.availability && TEAM.some(t=>t.name in plan.availability)){
+      Object.assign(availability, plan.availability);
+      // Guardar en localStorage para próximas cargas
+      try{ localStorage.setItem('avail:'+currentDate, JSON.stringify(availability)); }catch(e){}
+      renderAvailGrid();
+    }
+  }).catch(function(){});
   return false;
 }
 
@@ -2777,9 +2793,7 @@ async function confirmDay(){
     // Guardar planificación del día en Firebase para el Dashboard
     setTimeout(async()=>{
       try{
-        const availSaved = localStorage.getItem('avail:'+currentDate);
-        const availObj = availSaved ? JSON.parse(availSaved) : {};
-        const activeAnalistas = TEAM.filter(function(t){ return !t.reserve && availObj[t.name] !== false; }).length;
+        const activeAnalistas = TEAM.filter(function(t){ return !t.reserve && availability[t.name] !== false; }).length;
         const planData = {
           date: currentDate,
           dayType: dayType,
@@ -2787,7 +2801,8 @@ async function confirmDay(){
           confirmedAt: new Date().toISOString(),
           totalOps: dayOps.length,
           vols: planVols,
-          teamSize: activeAnalistas
+          teamSize: activeAnalistas,
+          availability: Object.assign({}, availability)
         };
         await fbSet('planificacion/'+currentDate, JSON.stringify(planData));
       }catch(e){ console.warn('No se pudo guardar planificación en Firebase:', e); }
@@ -2818,9 +2833,7 @@ async function confirmDay(){
     // Guardar planificación del día en Firebase para el Dashboard
     setTimeout(async()=>{
       try{
-        const availSaved = localStorage.getItem('avail:'+currentDate);
-        const availObj = availSaved ? JSON.parse(availSaved) : {};
-        const activeAnalistas = TEAM.filter(function(t){ return !t.reserve && availObj[t.name] !== false; }).length;
+        const activeAnalistas = TEAM.filter(function(t){ return !t.reserve && availability[t.name] !== false; }).length;
         const planData = {
           date: currentDate,
           dayType: dayType,
@@ -2828,7 +2841,8 @@ async function confirmDay(){
           confirmedAt: new Date().toISOString(),
           totalOps: dayOps.length,
           vols: planVols,
-          teamSize: activeAnalistas
+          teamSize: activeAnalistas,
+          availability: Object.assign({}, availability)
         };
         await fbSet('planificacion/'+currentDate, JSON.stringify(planData));
       }catch(e){ console.warn('No se pudo guardar planificación en Firebase:', e); }
@@ -2871,16 +2885,45 @@ function mergeOps(gsOps, localOps){
   if(!localOps || !localOps.length) return gsOps;
   const localMap = {};
   localOps.forEach(o=>{ localMap[o.uid]=o; });
-  return gsOps.map(op=>{
+  const result = gsOps.map(op=>{
     const local = localMap[op.uid];
     if(!local) return op;
+    let out = op;
+    // El resultado vive en /resultados/, no en el JSON de ops: nunca descartar el que ya está en memoria
+    if(local._resultado && !out._resultado) out = {...out, _resultado: local._resultado};
     // Solo tomar HECHO del local si GS tiene PENDIENTE (aún no sincronizó)
-    if(local.estado==='HECHO' && op.estado==='PENDIENTE'){
-      return {...op, estado:'HECHO', completado_en:local.completado_en, obs_seguimiento:local.obs_seguimiento||op.obs_seguimiento};
+    if(local.estado==='HECHO' && out.estado==='PENDIENTE'){
+      out = {...out, estado:'HECHO', completado_en:local.completado_en, obs_seguimiento:local.obs_seguimiento||out.obs_seguimiento};
+    } else if(local.obs_seguimiento && !out.obs_seguimiento){
+      out = {...out, obs_seguimiento:local.obs_seguimiento};
     }
-    if(local.obs_seguimiento && !op.obs_seguimiento) return {...op, obs_seguimiento:local.obs_seguimiento};
-    return op;
+    return out;
   });
+  return result;
+}
+
+// Clave estable con la que se guarda el resultado en /resultados/{fecha}/
+function resultadoKey(op){
+  return (op._id_operacion||op.identificador||op.uid||'').toString().replace(/[^a-zA-Z0-9_\-]/g,'_');
+}
+
+// Mezcla los resultados guardados en /resultados/ sobre las ops (incluye ops traídas de días anteriores).
+// Nunca borra un resultado ya presente: solo agrega o actualiza.
+async function attachResultados(ops){
+  const fechas = [...new Set(ops.map(o=>o._fecha_original||currentDate))];
+  for(const fecha of fechas){
+    try{
+      const resData = await fbGet('resultados/'+fecha);
+      if(!resData) continue;
+      ops.forEach(function(op){
+        if((op._fecha_original||currentDate)!==fecha) return;
+        const raw = resData[resultadoKey(op)] || resData[op.uid];
+        if(!raw) return;
+        try{ op._resultado = typeof raw==='string'?JSON.parse(raw):raw; }catch(e){}
+      });
+    }catch(e){ console.warn('No se pudieron cargar resultados de '+fecha, e); }
+  }
+  return ops;
 }
 
 async function loadSeguimiento(){
@@ -3009,7 +3052,7 @@ function renderSeguimiento(){
         ${op._reingreso?'<div style="font-size:10px;font-weight:700;color:#8E44AD;">🔁 Reingreso — ya evaluada hoy</div>':''}
         ${op._categoria_sla?`<span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:${(op._categoria_sla||'').includes('Pre')?'#FFF3CD':'#E0F3F5'};color:${(op._categoria_sla||'').includes('Pre')?'#BA7517':'#00808F'}">${(op._categoria_sla||'').includes('Pre')?'🔶 Pre Apr.':'🔷 Inm.'}</span>`:''}
       </td>
-      <td style="text-align:center;">${op._derivar_ivan?'<span style="display:inline-block;background:#F3E5F5;color:#8E44AD;font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;border:1px solid #CE93D8;">🤖 Iván IA</span>':'<span style="font-size:11px;color:var(--gray-text);">—</span>'}</td>
+      <td style="text-align:center;">${op._derivar_ivan?'<span style="display:inline-block;background:#F3E5F5;color:#8E44AD;font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;border:1px solid #CE93D8;">🤖 Iván IA</span>':(op._carga_rapida?'<span style="display:inline-block;background:#E0F3F5;color:#00808F;font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;border:1px solid #00CCD1;">⚡ Carga rápida</span>':'<span style="font-size:11px;color:var(--gray-text);">—</span>')}</td>
       <td><div class="analyst-name" style="font-size:13px;">${op.analista||'--'}</div></td>
       <td><select onchange="updateOp('${op.uid}','tier',this.value);buildOpsEntry();" style="font-size:11px;padding:3px 5px;border:1px solid var(--gray-line);border-radius:6px;background:#fff;cursor:pointer;"><option value="normal" ${op.tier==='normal'?'selected':''}>Normal</option><option value="urgente" ${op.tier==='urgente'?'selected':''}>⚡ Urgente</option><option value="vencido" ${op.tier==='vencido'?'selected':''}>🔴 Vencida</option></select></td>
       ${calcSLACell(op)}
@@ -3030,6 +3073,536 @@ function renderSeguimiento(){
       </td>
     </tr>`;
   }).join('');
+}
+
+// ─── VERIFICADOR DE URGENCIAS ────────────────────────────────────────────────
+// El texto pegado se procesa solo en el navegador: no se guarda ni se envía a ningún servidor.
+function _urgEsc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(ch){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]; }); }
+function _urgNorm(s){ return String(s||'').replace(/[\.\-\s]/g,'').toLowerCase(); }
+function _urgParseOps(v){
+  if(!v) return [];
+  if(typeof v==='string'){ try{ return JSON.parse(v); }catch(e){ return []; } }
+  return Array.isArray(v) ? v : [];
+}
+function _urgPuedeEditar(){
+  const u=(currentUser||'').trim().toLowerCase();
+  return !currentUser || u===JEFE.toLowerCase() || u==='jefe' || u==='jefe de riesgo';
+}
+
+function extraerIdentificadoresUrgencia(texto){
+  let t = String(texto||'');
+  t = t.replace(/\S+@\S+/g,' ').replace(/https?:\/\/\S+/g,' ');
+  const ruts=[]; const vistos=new Set();
+  const reRut = /\b\d{1,2}(?:\.\d{3}){2}-[\dkK]\b|\b\d{7,8}-[\dkK]\b|\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g;
+  t = t.replace(reRut,function(m){
+    const n=_urgNorm(m);
+    if(!vistos.has(n)){ vistos.add(n); ruts.push({raw:m,norm:n}); }
+    return ' ';
+  });
+  t = t.replace(/\+\d[\d\s\-]{7,}\d/g,' ').replace(/\b\d{4}[\s\-]\d{4}\b/g,' ');   // teléfonos
+  t = t.replace(/\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}\b/g,' ').replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g,' ');
+  const nums=[];
+  (t.match(/\b\d{3,9}\b/g)||[]).forEach(function(m){
+    if(!vistos.has(m)){ vistos.add(m); nums.push({raw:m,norm:m}); }
+  });
+  return {ruts:ruts, nums:nums};
+}
+
+function _urgBuscar(ops, tok, esRut){
+  return ops.filter(function(o){
+    const ident=_urgNorm(o.identificador);
+    const idop=String(o._id_operacion||'').trim();
+    return (ident && ident===tok.norm) || (!esRut && idop && idop===tok.norm);
+  });
+}
+
+function abrirVerificadorUrgencias(){
+  document.getElementById('urg-modal-bg')?.remove();
+  const html = '<div id="urg-modal-bg" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;">'
+    + '<div style="background:#fff;border-radius:14px;padding:22px;width:760px;max-width:96vw;max-height:92vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,41,0.25);">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
+    + '<div style="font-size:16px;font-weight:700;color:var(--navy);">🚨 Verificar urgencias</div>'
+    + '<button onclick="cerrarVerificadorUrgencias()" style="border:none;background:transparent;font-size:18px;cursor:pointer;color:var(--gray-text);">✕</button></div>'
+    + '<div style="font-size:12px;color:var(--gray-text);margin-bottom:10px;">Pega el texto del correo. Detecto los RUT/CPF e IDs y te digo cuáles están asignadas. El texto se procesa solo en tu navegador y no se guarda.</div>'
+    + '<textarea id="urg-texto" rows="7" placeholder="Pega aquí el correo de urgencias..." style="width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--gray-line);border-radius:8px;font-size:13px;font-family:inherit;resize:vertical;"></textarea>'
+    + '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">'
+    + '<button onclick="verificarUrgencias()" style="padding:8px 18px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-size:13px;font-weight:700;cursor:pointer;">Verificar</button>'
+    + '<button onclick="document.getElementById(\'urg-texto\').value=\'\';document.getElementById(\'urg-resultado\').innerHTML=\'\';window._urgResumenTxt=\'\';" style="padding:8px 14px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;font-size:13px;cursor:pointer;">Limpiar</button>'
+    + '</div>'
+    + '<div id="urg-resultado" style="margin-top:14px;"></div>'
+    + '</div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+  setTimeout(function(){ document.getElementById('urg-texto')?.focus(); }, 50);
+}
+
+function cerrarVerificadorUrgencias(){
+  document.getElementById('urg-modal-bg')?.remove();
+  window._urgResumenTxt = '';
+}
+
+function _urgFilaOp(op, contexto, fecha){
+  const tier = (op.tier||'normal');
+  const tierBadge = tier==='urgente' ? '<span style="background:#FAEEDA;color:#BA7517;font-size:10px;font-weight:700;padding:2px 7px;border-radius:8px;">⚡ Urgente</span>'
+    : tier==='vencido' ? '<span style="background:#FCEBEB;color:#C0392B;font-size:10px;font-weight:700;padding:2px 7px;border-radius:8px;">🔴 Vencida</span>'
+    : '<span style="background:#EEF1F4;color:#5C6670;font-size:10px;font-weight:700;padding:2px 7px;border-radius:8px;">Normal</span>';
+  const estadoBadge = op.estado==='HECHO'
+    ? '<span style="background:#E3F6EA;color:#1E8449;font-size:10px;font-weight:700;padding:2px 7px;border-radius:8px;">HECHO'+(op.completado_en?' · '+new Date(op.completado_en).toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'}):'')+'</span>'
+    : '<span style="background:#FDEBF3;color:#C2185B;font-size:10px;font-weight:700;padding:2px 7px;border-radius:8px;">PENDIENTE</span>';
+  const res = op._resultado ? '<span style="font-size:11px;color:var(--gray-text);"> · '+_urgEsc(op._resultado.tipo)+(op._resultado.motivo?' — '+_urgEsc(op._resultado.motivo):'')+'</span>' : '';
+  const quien = '<b>'+_urgEsc(op.analista||'Sin asignar')+'</b> · '+_urgEsc(op.productName||op.productKey||'');
+  const btn = (contexto==='hoy' && tier==='normal' && _urgPuedeEditar())
+    ? ' <button data-uid="'+_urgEsc(op.uid)+'" onclick="marcarUrgenteVerificador(this.dataset.uid)" style="margin-left:6px;padding:3px 9px;border:1px solid #BA7517;border-radius:6px;background:#fff;color:#BA7517;font-size:11px;font-weight:700;cursor:pointer;">Marcar urgente</button>' : '';
+  const aviso = (contexto==='hoy' && tier==='normal') ? '<div style="font-size:11px;color:#BA7517;margin-top:2px;">Asignada, pero sin marca de urgencia.</div>' : '';
+  const ctxLbl = contexto==='ayer' ? '<span style="font-size:10px;color:#5C6670;">🕓 Asignada ayer ('+_urgEsc(fecha)+') · </span>'
+    : contexto==='borrador' ? '<span style="font-size:10px;color:#5C6670;">📝 En borrador, aún sin confirmar · </span>' : '';
+  return '<div style="padding:4px 0 4px 14px;font-size:12px;">'+ctxLbl+quien+' '+estadoBadge+' '+tierBadge+res+btn+aviso+'</div>';
+}
+
+async function verificarUrgencias(){
+  const out = document.getElementById('urg-resultado');
+  const texto = document.getElementById('urg-texto')?.value || '';
+  if(!out) return;
+  const ids = extraerIdentificadoresUrgencia(texto);
+  if(!ids.ruts.length && !ids.nums.length){
+    out.innerHTML = '<div style="font-size:12px;color:var(--gray-text);">No detecté RUT/CPF ni IDs en el texto. Pega el correo completo e intenta de nuevo.</div>';
+    return;
+  }
+  out.innerHTML = '<div style="font-size:12px;color:var(--gray-text);">⏳ Consultando operaciones...</div>';
+
+  let hoy=[], ayer=[], fechaAyer='';
+  try{
+    const r = await store.get('ops:'+currentDate);
+    hoy = _urgParseOps(r&&r.value);
+    await attachResultados(hoy);
+  }catch(e){}
+  try{
+    const d = new Date(currentDate+'T12:00:00');
+    d.setDate(d.getDate()-1);
+    while(d.getDay()===0||d.getDay()===6) d.setDate(d.getDate()-1);
+    fechaAyer = d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+    const r2 = await store.get('ops:'+fechaAyer);
+    ayer = _urgParseOps(r2&&r2.value);
+    ayer.forEach(function(o){ o._fecha_original = fechaAyer; });
+    await attachResultados(ayer);
+  }catch(e){}
+  const borrador = (dayOps||[]).filter(function(o){ return !hoy.some(function(h){ return h.uid===o.uid; }); });
+
+  const entradas=[];
+  ids.ruts.forEach(function(t){ entradas.push({tok:t, esRut:true}); });
+  ids.nums.forEach(function(t){ entradas.push({tok:t, esRut:false}); });
+  entradas.forEach(function(e){
+    e.hoy = _urgBuscar(hoy, e.tok, e.esRut);
+    e.borr = e.hoy.length ? [] : _urgBuscar(borrador, e.tok, e.esRut);
+    e.ayer = (e.hoy.length||e.borr.length) ? [] : _urgBuscar(ayer, e.tok, e.esRut);
+    e.hallada = !!(e.hoy.length||e.borr.length||e.ayer.length);
+  });
+
+  const halladas = entradas.filter(function(e){ return e.hallada; });
+  const rutsSin  = entradas.filter(function(e){ return e.esRut && !e.hallada; });
+  const numsSin  = entradas.filter(function(e){ return !e.esRut && !e.hallada; });
+  const sinMarca = halladas.filter(function(e){ return e.hoy.some(function(o){ return (o.tier||'normal')==='normal'; }); }).length;
+
+  const lineas=[];
+  let html = '<div style="background:var(--cyan-light);border:1px solid var(--cyan);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--teal);margin-bottom:10px;">'
+    + '<b>'+(halladas.length+rutsSin.length)+' urgencias detectadas</b> · '
+    + '✅ '+halladas.length+' asignadas · ⚠️ '+rutsSin.length+' sin asignar'
+    + (sinMarca ? ' · ⚡ '+sinMarca+' sin marca de urgencia' : '') + '</div>';
+
+  halladas.forEach(function(e){
+    html += '<div style="border:1px solid var(--gray-line);border-radius:8px;padding:8px 10px;margin-bottom:6px;">'
+      + '<div style="font-size:12px;font-weight:700;color:var(--navy);">✅ '+_urgEsc(e.tok.raw)+'</div>';
+    e.hoy.forEach(function(o){ html += _urgFilaOp(o,'hoy',currentDate); });
+    e.borr.forEach(function(o){ html += _urgFilaOp(o,'borrador',currentDate); });
+    e.ayer.forEach(function(o){ html += _urgFilaOp(o,'ayer',fechaAyer); });
+    html += '</div>';
+    const o0 = (e.hoy[0]||e.borr[0]||e.ayer[0]);
+    const pref = e.hoy.length ? 'Asignada a ' : e.borr.length ? 'En borrador (sin confirmar), asignada a ' : 'Asignada ayer ('+fechaAyer+') a ';
+    lineas.push(e.tok.raw+' — '+pref+(o0.analista||'Sin asignar')+' ('+o0.estado+')'+(e.hoy.length && (o0.tier||'normal')==='normal' ? ' — sin marca de urgencia' : ''));
+  });
+  rutsSin.forEach(function(e){
+    html += '<div style="border:1px solid #F5C6CB;background:#FFF5F5;border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12px;"><b style="color:#C0392B;">⚠️ '+_urgEsc(e.tok.raw)+'</b> — no está en el reparto de hoy ni de ayer.</div>';
+    lineas.push(e.tok.raw+' — NO está en el reparto');
+  });
+  if(numsSin.length){
+    html += '<details style="margin-top:6px;"><summary style="font-size:11px;color:var(--gray-text);cursor:pointer;">'+numsSin.length+' número(s) del correo sin coincidencia (pueden ser IDs sin asignar u otros datos)</summary>'
+      + '<div style="font-size:11px;color:var(--gray-text);padding:6px 0;">'+numsSin.map(function(e){ return _urgEsc(e.tok.raw); }).join(' · ')+'</div></details>';
+  }
+  html += '<div style="margin-top:10px;"><button onclick="copiarResumenUrgencias()" style="padding:6px 14px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-size:12px;font-weight:600;cursor:pointer;">📋 Copiar resumen</button></div>';
+  window._urgResumenTxt = lineas.join('\n');
+  out.innerHTML = html;
+}
+
+function copiarResumenUrgencias(){
+  const txt = window._urgResumenTxt || '';
+  if(!txt){ alert('No hay resumen para copiar.'); return; }
+  navigator.clipboard.writeText(txt).then(function(){ alert('Resumen copiado.'); }).catch(function(){ alert('No se pudo copiar. Selecciona el texto manualmente.'); });
+}
+
+async function marcarUrgenteVerificador(uid){
+  if(!_urgPuedeEditar()){ alert('Solo el Jefe de Riesgo puede cambiar la urgencia desde aquí.'); return; }
+  try{
+    const r = await store.get('ops:'+currentDate);
+    const ops = _urgParseOps(r&&r.value);
+    const op = ops.find(function(o){ return o.uid===uid; });
+    if(!op){ alert('No encontré la operación en el reparto de hoy. Actualiza e intenta de nuevo.'); return; }
+    op.tier = 'urgente';
+    await store.set('ops:'+currentDate, JSON.stringify(ops));
+    if(seguimientoOps.length){
+      const m = seguimientoOps.find(function(o){ return o.uid===uid; });
+      if(m) m.tier = 'urgente';
+      dayOps = seguimientoOps.map(function(o){ return {...o}; });
+      saveLocalBackup(seguimientoOps);
+      if(document.getElementById('page-seguimiento').classList.contains('active')) renderSeguimiento();
+    }
+    verificarUrgencias();
+  }catch(e){ alert('Error al marcar urgente: '+e.message); }
+}
+
+// ─── CARGA RÁPIDA ────────────────────────────────────────────────────────────
+// Importa operaciones ya evaluadas (p. ej. una dinámica) como HECHO con su resultado.
+// El archivo o texto se procesa en el navegador; solo se guarda lo que se confirma importar.
+function _crNorm(s){
+  return String(s==null?'':s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase().replace(/\s+/g,' ');
+}
+var CR_CAMPOS = {
+  fecha:['fecha','fecha evaluacion','fecha de evaluacion','dia'],
+  identificador:['identificador','rut','cpf','id','id operacion','rut/cpf/id','rut / cpf / id','rut cliente'],
+  producto:['producto','segmento'],
+  analista:['analista','evaluador','evaluado por'],
+  resultado:['resultado','resolucion','decision','estado final'],
+  motivo:['motivo','causal','razon'],
+  obs:['observacion','observaciones','obs','comentario','comentarios']
+};
+var CR_ORDEN = ['fecha','identificador','producto','analista','resultado','motivo','obs'];
+
+function crDetectarCabecera(fila){
+  const mapa = {};
+  (fila||[]).forEach(function(celda, i){
+    const n = _crNorm(celda);
+    Object.keys(CR_CAMPOS).forEach(function(campo){
+      if(mapa[campo]===undefined && CR_CAMPOS[campo].indexOf(n)>=0) mapa[campo]=i;
+    });
+  });
+  return (mapa.identificador!==undefined && mapa.resultado!==undefined) ? mapa : null;
+}
+
+function crFechaYMD(v, hoy){
+  if(v===null || v===undefined || String(v).trim()==='') return hoy;
+  if(v instanceof Date && !isNaN(v)){
+    return v.getFullYear()+'-'+('0'+(v.getMonth()+1)).slice(-2)+'-'+('0'+v.getDate()).slice(-2);
+  }
+  if(typeof v==='number' && v>20000 && v<80000){   // número de serie de Excel
+    const d = new Date(Date.UTC(1899,11,30) + Math.floor(v)*86400000);
+    return d.getUTCFullYear()+'-'+('0'+(d.getUTCMonth()+1)).slice(-2)+'-'+('0'+d.getUTCDate()).slice(-2);
+  }
+  const s = String(v).trim();
+  let y, m, d, mt;
+  if((mt = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))){ y=+mt[1]; m=+mt[2]; d=+mt[3]; }
+  else if((mt = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})$/))){ d=+mt[1]; m=+mt[2]; y=+mt[3]; if(y<100) y+=2000; }
+  else return null;
+  const chk = new Date(Date.UTC(y,m-1,d));
+  if(chk.getUTCFullYear()!==y || chk.getUTCMonth()!==m-1 || chk.getUTCDate()!==d) return null;
+  return y+'-'+('0'+m).slice(-2)+'-'+('0'+d).slice(-2);
+}
+
+// true / false si tiene formato RUT chileno; null si el identificador no es un RUT (ID, CPF, etc.)
+function crRutValido(s){
+  const m = String(s).trim().match(/^(\d{1,2})\.?(\d{3})\.?(\d{3})-([\dkK])$/);
+  if(!m) return null;
+  const cuerpo = m[1]+m[2]+m[3];
+  let suma = 0, f = 2;
+  for(let i=cuerpo.length-1; i>=0; i--){ suma += (+cuerpo[i])*f; f = (f===7) ? 2 : f+1; }
+  const r = 11 - (suma % 11);
+  const dv = r===11 ? '0' : (r===10 ? 'k' : String(r));
+  return dv === m[4].toLowerCase();
+}
+
+function crProducto(v){
+  const n = _crNorm(v);
+  if(!n) return null;
+  return PRODUCTS.find(function(p){ return _crNorm(p.name)===n || p.key===n; }) || null;
+}
+
+function crResultado(v){
+  const n = _crNorm(v);
+  if(/^aprob/.test(n)) return 'aprobada';
+  if(/^devuel|^devolu/.test(n)) return 'devuelta';
+  if(/^rechaz/.test(n)) return 'rechazada';
+  return null;
+}
+
+function crMotivo(tipo, v){
+  const grupos = tipo==='devuelta' ? MOTIVOS_DEVOLUCION : MOTIVOS_RECHAZO;
+  const lista = [];
+  grupos.forEach(function(g){ g.motivos.forEach(function(m){ lista.push(m); }); });
+  const limpiar = function(s){ return _crNorm(s).replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim(); };  // ignora puntos, barras y %
+  const n = limpiar(v);
+  const nombre = tipo==='devuelta' ? 'Devoluciones' : 'Rechazos';
+  if(!n) return {error:'Motivo obligatorio en '+tipo};
+  let m = lista.find(function(x){ return limpiar(x)===n; });
+  if(!m){
+    const cand = lista.filter(function(x){ const nx=limpiar(x); return nx.indexOf(n)>=0 || n.indexOf(nx)>=0; });
+    if(cand.length===1) m = cand[0];
+  }
+  if(!m) return {error:'Motivo "'+String(v).trim()+'" no está en el catálogo de '+nombre};
+  return {motivo:m};
+}
+
+function crParseTexto(texto){
+  const lineas = String(texto||'').split(/\r?\n/).filter(function(l){ return l.trim()!==''; });
+  if(!lineas.length) return [];
+  const sep = lineas[0].indexOf('\t')>=0 ? '\t' : (lineas[0].indexOf(';')>=0 ? ';' : ',');
+  return lineas.map(function(l){ return l.split(sep).map(function(c){ return c.trim().replace(/^"|"$/g,''); }); });
+}
+
+function crValidarMatriz(matriz, hoy){
+  const filas = [];
+  if(!matriz || !matriz.length) return {filas:filas, cabecera:false};
+  let mapa = crDetectarCabecera(matriz[0]);
+  let inicio = 0;
+  if(mapa){ inicio = 1; } else { mapa = {}; CR_ORDEN.forEach(function(c,i){ mapa[c]=i; }); }
+  const claves = new Set();
+  for(let r=inicio; r<matriz.length; r++){
+    const fila = matriz[r] || [];
+    if(fila.every(function(c){ return String(c==null?'':c).trim()===''; })) continue;
+    const get = function(campo){
+      const i = mapa[campo];
+      if(i===undefined) return '';
+      const x = fila[i];
+      return (x===undefined || x===null) ? '' : x;
+    };
+    const f = {n:r+1, errores:[], avisos:[], dup:''};
+    f.fecha = crFechaYMD(get('fecha'), hoy);
+    if(!f.fecha) f.errores.push('Fecha inválida');
+    else if(f.fecha > hoy) f.errores.push('Fecha futura');
+    f.identificador = String(get('identificador')).trim();
+    if(!f.identificador) f.errores.push('Falta identificador');
+    else if(crRutValido(f.identificador)===false) f.avisos.push('Dígito verificador del RUT no cuadra');
+    f.productoTxt = String(get('producto')).trim();
+    f.producto = crProducto(get('producto'));
+    if(!f.producto) f.errores.push('Producto no reconocido');
+    f.tipo = crResultado(get('resultado'));
+    if(!f.tipo) f.errores.push('Resultado debe ser Aprobada, Devuelta o Rechazada');
+    f.motivo = '';
+    if(f.tipo==='devuelta' || f.tipo==='rechazada'){
+      const mm = crMotivo(f.tipo, get('motivo'));
+      if(mm.error) f.errores.push(mm.error); else f.motivo = mm.motivo;
+    }
+    const an = String(get('analista')).trim();
+    const t = an ? TEAM.find(function(x){ return _crNorm(x.name)===_crNorm(an); }) : null;
+    f.analista = t ? t.name : (an || 'Dinámica');
+    if(an && !t) f.avisos.push('Analista no está en el equipo');
+    f.obs = String(get('obs')).trim();
+    if(!f.errores.length){
+      const k = f.fecha+'|'+_urgNorm(f.identificador);
+      if(claves.has(k)) f.dup = 'Repetida en el archivo'; else claves.add(k);
+    }
+    f.estado = f.errores.length ? 'error' : (f.dup ? 'dup' : 'ok');
+    filas.push(f);
+  }
+  return {filas:filas, cabecera:inicio===1};
+}
+
+async function crMarcarExistentes(filas){
+  const fechas = [];
+  filas.forEach(function(f){ if(f.estado==='ok' && fechas.indexOf(f.fecha)<0) fechas.push(f.fecha); });
+  const claves = {};
+  for(const fecha of fechas){
+    try{
+      const r = await store.get('ops:'+fecha);
+      claves[fecha] = new Set(_urgParseOps(r&&r.value).map(function(o){ return _urgNorm(o.identificador); }));
+    }catch(e){
+      claves[fecha] = null;
+    }
+  }
+  filas.forEach(function(f){
+    if(f.estado!=='ok') return;
+    const set = claves[f.fecha];
+    if(set===null){ f.avisos.push('No se pudo verificar duplicados de ese día'); return; }
+    if(set && set.has(_urgNorm(f.identificador))){ f.dup = 'Ya existe ese día en el gestor'; f.estado = 'dup'; }
+  });
+}
+
+function abrirCargaRapida(){
+  document.getElementById('cr-modal-bg')?.remove();
+  window._crMatriz = null; window._crFilas = [];
+  const html = '<div id="cr-modal-bg" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;">'
+    + '<div style="background:#fff;border-radius:14px;padding:22px;width:900px;max-width:97vw;max-height:93vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,41,0.25);">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
+    + '<div style="font-size:16px;font-weight:700;color:var(--navy);">⚡ Carga rápida de operaciones evaluadas</div>'
+    + '<button onclick="cerrarCargaRapida()" style="border:none;background:transparent;font-size:18px;cursor:pointer;color:var(--gray-text);">✕</button></div>'
+    + '<div style="font-size:12px;color:var(--gray-text);margin-bottom:10px;">Sube un Excel o pega la tabla desde Excel. Las operaciones quedan como <b>HECHO</b> con su resultado y cuentan como cualquier operación del día. Columnas: <b>Fecha · Identificador · Producto · Analista · Resultado · Motivo · Observación</b> (fecha y analista pueden ir vacíos).</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">'
+    + '<button onclick="crDescargarPlantilla()" style="padding:6px 12px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-size:12px;font-weight:600;cursor:pointer;">📥 Descargar plantilla</button>'
+    + '<input type="file" id="cr-archivo" accept=".xlsx,.xls,.csv" onchange="crAlElegirArchivo(this)" style="font-size:12px;">'
+    + '<span id="cr-archivo-lbl" style="font-size:11px;color:var(--gray-text);"></span></div>'
+    + '<textarea id="cr-texto" rows="5" placeholder="…o pega aquí la tabla copiada desde Excel (con o sin fila de títulos)" style="width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--gray-line);border-radius:8px;font-size:12px;font-family:monospace;resize:vertical;"></textarea>'
+    + '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">'
+    + '<button onclick="crValidar()" style="padding:8px 18px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-size:13px;font-weight:700;cursor:pointer;">Validar</button>'
+    + '<button onclick="cerrarCargaRapida()" style="padding:8px 14px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;font-size:13px;cursor:pointer;">Cerrar</button></div>'
+    + '<div id="cr-resultado" style="margin-top:14px;"></div>'
+    + '</div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function cerrarCargaRapida(){
+  document.getElementById('cr-modal-bg')?.remove();
+  window._crMatriz = null; window._crFilas = [];
+}
+
+async function crAlElegirArchivo(input){
+  const file = input.files && input.files[0];
+  const lbl = document.getElementById('cr-archivo-lbl');
+  if(!file) return;
+  try{
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, {type:'array'});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    window._crMatriz = XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:''});
+    document.getElementById('cr-texto').value = '';
+    if(lbl) lbl.textContent = file.name+' · '+window._crMatriz.length+' filas leídas';
+    crValidar();
+  }catch(e){
+    if(lbl) lbl.textContent = '';
+    alert('No pude leer el archivo: '+e.message);
+  }
+}
+
+async function crValidar(){
+  const out = document.getElementById('cr-resultado');
+  const texto = document.getElementById('cr-texto')?.value || '';
+  const matriz = texto.trim() ? crParseTexto(texto) : window._crMatriz;
+  if(!matriz || !matriz.length){
+    out.innerHTML = '<div style="font-size:12px;color:var(--gray-text);">Sube un archivo o pega la tabla primero.</div>';
+    return;
+  }
+  out.innerHTML = '<div style="font-size:12px;color:var(--gray-text);">⏳ Validando...</div>';
+  const res = crValidarMatriz(matriz, todayISO());
+  await crMarcarExistentes(res.filas);
+  window._crFilas = res.filas;
+  crRenderPreview(res);
+}
+
+function crRenderPreview(res){
+  const out = document.getElementById('cr-resultado');
+  const filas = res.filas;
+  if(!filas.length){ out.innerHTML = '<div style="font-size:12px;color:var(--gray-text);">No encontré filas con datos.</div>'; return; }
+  const ok = filas.filter(function(f){ return f.estado==='ok'; }).length;
+  const err = filas.filter(function(f){ return f.estado==='error'; }).length;
+  const dup = filas.filter(function(f){ return f.estado==='dup'; }).length;
+  const avi = filas.filter(function(f){ return f.estado==='ok' && f.avisos.length; }).length;
+  let html = '<div style="background:var(--cyan-light);border:1px solid var(--cyan);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--teal);margin-bottom:10px;">'
+    + '<b>'+filas.length+' filas</b> · ✅ '+ok+' a importar · ❌ '+err+' con error · ⚠️ '+dup+' omitidas por duplicado'
+    + (avi ? ' · ℹ️ '+avi+' con aviso' : '')
+    + (res.cabecera ? '' : ' · <i>sin fila de títulos: usé el orden de la plantilla</i>')+'</div>';
+  html += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:11px;">'
+    + '<thead><tr style="background:var(--navy);color:#fff;">'
+    + ['Fila','Fecha','Identificador','Producto','Analista','Resultado','Motivo','Estado'].map(function(h){ return '<th style="padding:5px 7px;text-align:left;">'+h+'</th>'; }).join('')
+    + '</tr></thead><tbody>';
+  filas.slice(0,300).forEach(function(f){
+    const bg = f.estado==='error' ? '#FFF5F5' : (f.estado==='dup' ? '#FFF8E1' : '#fff');
+    const estadoTxt = f.estado==='error' ? '<span style="color:#C0392B;">❌ '+_urgEsc(f.errores.join(' · '))+'</span>'
+      : f.estado==='dup' ? '<span style="color:#BA7517;">⚠️ Omitida: '+_urgEsc(f.dup)+'</span>'
+      : '<span style="color:#1E8449;">✅ OK</span>'+(f.avisos.length ? ' <span style="color:#BA7517;">ℹ️ '+_urgEsc(f.avisos.join(' · '))+'</span>' : '');
+    html += '<tr style="background:'+bg+';border-bottom:1px solid var(--gray-line);">'
+      + '<td style="padding:4px 7px;">'+f.n+'</td>'
+      + '<td style="padding:4px 7px;">'+_urgEsc(f.fecha||'—')+'</td>'
+      + '<td style="padding:4px 7px;">'+_urgEsc(f.identificador||'—')+'</td>'
+      + '<td style="padding:4px 7px;">'+_urgEsc(f.producto?f.producto.name:(f.productoTxt||'—'))+'</td>'
+      + '<td style="padding:4px 7px;">'+_urgEsc(f.analista)+'</td>'
+      + '<td style="padding:4px 7px;">'+_urgEsc(f.tipo||'—')+'</td>'
+      + '<td style="padding:4px 7px;">'+_urgEsc(f.motivo||'')+'</td>'
+      + '<td style="padding:4px 7px;">'+estadoTxt+'</td></tr>';
+  });
+  html += '</tbody></table></div>';
+  if(filas.length>300) html += '<div style="font-size:11px;color:var(--gray-text);margin-top:4px;">Se muestran las primeras 300 filas; se validaron todas.</div>';
+  html += '<div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+    + '<button id="cr-btn-importar" onclick="crImportar()" '+(ok?'':'disabled ')+'style="padding:9px 20px;border:none;border-radius:8px;background:'+(ok?'var(--teal)':'#B8C2CC')+';color:#fff;font-size:13px;font-weight:700;cursor:'+(ok?'pointer':'not-allowed')+';">Importar '+ok+' operaciones</button>'
+    + '<span id="cr-estado" style="font-size:12px;color:var(--gray-text);"></span></div>';
+  out.innerHTML = html;
+}
+
+async function crImportar(){
+  if(!_urgPuedeEditar()){ alert('Solo el Jefe de Riesgo puede importar operaciones.'); return; }
+  const validas = (window._crFilas||[]).filter(function(f){ return f.estado==='ok'; });
+  if(!validas.length) return;
+  if(!confirm('Se importarán '+validas.length+' operaciones como HECHO con su resultado. ¿Continuar?')) return;
+  const btn = document.getElementById('cr-btn-importar');
+  const est = document.getElementById('cr-estado');
+  if(btn){ btn.disabled = true; btn.style.opacity = '0.6'; }
+  const hoy = todayISO();
+  const porFecha = {};
+  validas.forEach(function(f){ (porFecha[f.fecha] = porFecha[f.fecha] || []).push(f); });
+  let importadas = 0, omitidas = 0; const fallos = [];
+  try{
+    for(const fecha of Object.keys(porFecha).sort()){
+      if(est) est.textContent = 'Importando '+fecha+'...';
+      const r = await store.get('ops:'+fecha);
+      const existentes = _urgParseOps(r&&r.value);
+      const clavesEx = new Set(existentes.map(function(o){ return _urgNorm(o.identificador); }));
+      const iso = (fecha===hoy) ? new Date().toISOString() : new Date(fecha+'T12:00:00').toISOString();
+      const nuevas = [], resultados = [];
+      porFecha[fecha].forEach(function(f){
+        if(clavesEx.has(_urgNorm(f.identificador))){ omitidas++; return; }   // volvió a chequear con datos frescos
+        const op = {uid:uid(), productKey:f.producto.key, productName:f.producto.name, identificador:f.identificador,
+          analista:f.analista, estado:'HECHO', tier:'normal', fecha_riesgo:'', obs:'', obs_seguimiento:'',
+          asignado_en:iso, completado_en:iso, confirmedBy:currentUser||'--', _saved:true, _carga_rapida:true};
+        nuevas.push(op);
+        resultados.push({op:op, res:{tipo:f.tipo, motivo:f.motivo, obs:f.obs, fecha:iso, analista:f.analista, origen:'carga_rapida'}});
+      });
+      if(!nuevas.length) continue;
+      // Se AGREGAN al día; nunca se reemplaza lo que ya existe
+      await store.set('ops:'+fecha, JSON.stringify(existentes.concat(nuevas)));
+      for(let i=0; i<resultados.length; i+=10){
+        await Promise.all(resultados.slice(i,i+10).map(function(x){
+          return fbSet('resultados/'+fecha+'/'+resultadoKey(x.op), JSON.stringify(x.res))
+            .catch(function(e){ fallos.push(x.op.identificador); });
+        }));
+      }
+      importadas += nuevas.length;
+      // Si es el día en pantalla, evitar que un "Confirmar reparto" posterior las borre
+      if(fecha===currentDate && dayOps.length){
+        nuevas.forEach(function(o){ dayOps.push({...o}); });
+        saveDraft();
+      }
+    }
+    let msg = '✅ Importadas '+importadas+' operaciones como HECHO.';
+    if(omitidas) msg += ' Omitidas por duplicado: '+omitidas+'.';
+    if(fallos.length) msg += ' ⚠️ No se pudo guardar el resultado de '+fallos.length+' (reintenta esas filas).';
+    document.getElementById('cr-resultado').innerHTML = '<div style="background:#E3F6EA;border:1px solid #27AE60;border-radius:8px;padding:12px;font-size:13px;color:#1E8449;">'+_urgEsc(msg)+'</div>';
+    window._crFilas = [];
+    const seg = document.getElementById('page-seguimiento');
+    if(seg && seg.classList.contains('active')) loadSeguimiento();
+  }catch(e){
+    if(est) est.textContent = '';
+    if(btn){ btn.disabled = false; btn.style.opacity = '1'; }
+    alert('Error al importar: '+e.message+'\nLo ya escrito no se revierte automáticamente: revisa Seguimiento antes de reintentar.');
+  }
+}
+
+function crDescargarPlantilla(){
+  const hoy = todayISO();
+  const wb = XLSX.utils.book_new();
+  const cab = ['Fecha','Identificador','Producto','Analista','Resultado','Motivo','Observación'];
+  const ejemplos = [
+    [hoy,'11.111.111-1','Primera Vivienda','Dinámica','Aprobada','',''],
+    [hoy,'2032','Leasing Habitacional','Dinámica','Devuelta','Doc. faltante','Ejemplo: falta liquidación'],
+    [hoy,'22.222.222-2','Subsidio','Dinámica','Rechazada','Civil/embargo','']
+  ];
+  const ws = XLSX.utils.aoa_to_sheet([cab].concat(ejemplos));
+  ws['!cols'] = [{wch:12},{wch:16},{wch:22},{wch:14},{wch:12},{wch:34},{wch:34}];
+  XLSX.utils.book_append_sheet(wb, ws, 'Plantilla');
+  const dev = [], rec = [];
+  MOTIVOS_DEVOLUCION.forEach(function(g){ g.motivos.forEach(function(m){ dev.push(m); }); });
+  MOTIVOS_RECHAZO.forEach(function(g){ g.motivos.forEach(function(m){ rec.push(m); }); });
+  const n = Math.max(PRODUCTS.length, dev.length, rec.length, 3);
+  const cat = [['Producto','Resultado','Motivos de devolución','Motivos de rechazo']];
+  const res3 = ['Aprobada','Devuelta','Rechazada'];
+  for(let i=0;i<n;i++) cat.push([PRODUCTS[i]?PRODUCTS[i].name:'', res3[i]||'', dev[i]||'', rec[i]||'']);
+  const wc = XLSX.utils.aoa_to_sheet(cat);
+  wc['!cols'] = [{wch:22},{wch:12},{wch:34},{wch:34}];
+  XLSX.utils.book_append_sheet(wb, wc, 'Catálogo');
+  XLSX.writeFile(wb, 'Plantilla_Carga_Rapida.xlsx');
 }
 
 async function toggleEstado(uid){
@@ -4061,7 +4634,7 @@ async function loadDashboard(){
     // Agrupar ops HECHO por analista y ordenar por completado_en
     var opsPorAnalista = {};
     allOps.forEach(function(op){
-      if(op.estado!=='HECHO' || !op.completado_en) return;
+      if(op.estado!=='HECHO' || !op.completado_en || op._carga_rapida) return; // carga rápida: sin hora real de evaluación, no mide ritmo
       var a = op.analista||'Sin asignar';
       if(!opsPorAnalista[a]) opsPorAnalista[a] = [];
       opsPorAnalista[a].push(op);
@@ -4646,7 +5219,10 @@ async function loadMiTurno(){
   try{
     const r = await store.get('ops:'+currentDate);
     const gsOps = r&&r.value ? JSON.parse(r.value) : [];
+    const ayerOpsEnMemoria = seguimientoOps.filter(o=>o._de_ayer);
     seguimientoOps = mergeOps(gsOps, backup || seguimientoOps);
+    ayerOpsEnMemoria.forEach(function(o){ if(!seguimientoOps.some(x=>x.uid===o.uid)) seguimientoOps.push(o); });
+    await attachResultados(seguimientoOps);
     saveLocalBackup(seguimientoOps);
   } catch(e){
     seguimientoOps = backup || seguimientoOps || [];
@@ -5167,20 +5743,10 @@ async function silentRefreshSeguimiento(){
     const gsOps = r&&r.value ? JSON.parse(r.value) : [];
     if(gsOps.length < seguimientoOps.length) return;
     const merged = mergeOps(gsOps, backup || seguimientoOps);
+    await attachResultados(merged);
     const changed = JSON.stringify(merged) !== JSON.stringify(seguimientoOps);
     if(changed){
       seguimientoOps = merged;
-      // Mergear resultados desde ruta separada
-      try{
-        const resData = await fbGet('resultados/'+currentDate);
-        if(resData){
-          seguimientoOps.forEach(function(op){
-            const stableKey = (op._id_operacion||op.identificador||op.uid).toString().replace(/[^a-zA-Z0-9_\-]/g,'_');
-            const resRaw = resData[stableKey] || resData[op.uid];
-            if(resRaw){ try{ op._resultado = typeof resRaw==='string'?JSON.parse(resRaw):resRaw; }catch(e){} }
-          });
-        }
-      }catch(e){}
       saveLocalBackup(seguimientoOps);
       if(Date.now() - _lastRefresh > 5000){
         populateFilters();
