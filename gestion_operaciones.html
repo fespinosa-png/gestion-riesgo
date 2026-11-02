@@ -2233,15 +2233,16 @@ function buildOpsEntry(){
                     const avail = availability[t.name];
                     return `<option value="${t.name}" ${op.analista===t.name?'selected':''} ${!avail&&op.analista!==t.name?'disabled':''}>${t.name}${t.reserve?' (Reserva)':''}${!avail?' -- ausente':''}</option>`;
                   }).join('');
-                  const origenBadge = op._derivar_ivan
-                    ? '<span style="background:#F3E5F5;color:#8E44AD;font-size:9px;font-weight:700;padding:2px 6px;border-radius:8px;border:1px solid #CE93D8;">🤖 Iván IA</span>'
+                  const origenBadge = (op._derivar_ivan
+                    ? iaBadgeHTML(op, true)
                     : op._reingreso
                     ? '<span style="background:#EDE7F6;color:#6A1B9A;font-size:9px;font-weight:700;padding:2px 6px;border-radius:8px;">🔁 Reingreso</span>'
-                    : '—';
+                    : '')
+                    + (op._categoria_sla ? '<div style="margin-top:3px;">'+catBadgeHTML(op)+'</div>' : '');
                   return `<tr style="border-bottom:1px solid var(--gray-line);">
                     <td style="padding:7px 8px;">${p.name} <span class="role-badge ${p.key==='brasil'?'brasil':''}">${p.idType}</span></td>
                     <td style="padding:7px 8px;"><input type="text" value="${op.identificador||''}" placeholder="Se completa después" oninput="updateOp('${op.uid}','identificador',this.value)" style="border:none;border-bottom:1px dashed var(--gray-line);background:transparent;font-size:12px;width:140px;outline:none;padding:1px 2px;"></td>
-                    <td style="padding:7px 8px;">${origenBadge}</td>
+                    <td style="padding:7px 8px;">${origenBadge||'—'}</td>
                     <td style="padding:7px 8px;"><select onchange="updateOp('${op.uid}','tier',this.value);buildOpsEntry();" style="font-size:11px;padding:3px 5px;border:1px solid var(--gray-line);border-radius:6px;background:#fff;"><option value="normal" ${op.tier==='normal'?'selected':''}>Normal</option><option value="urgente" ${op.tier==='urgente'?'selected':''}>⚡ Urgente</option><option value="vencido" ${op.tier==='vencido'?'selected':''}>🔴 Vencida</option></select></td>
                     <td style="padding:7px 8px;"><select onchange="updateOp('${op.uid}','analista',this.value);buildOpsEntry();" style="font-size:12px;padding:4px 6px;border:1px solid var(--gray-line);border-radius:6px;"><option value="">Sin asignar</option>${opts}</select></td>
                     <td style="padding:7px 8px;"><button class="rm" onclick="removeOpAndRefresh('${op.uid}')">✕</button></td>
@@ -2273,6 +2274,21 @@ function removeOpAndRefresh(uid){
   buildOpsEntry();
 }
 
+// Marca de operaciones evaluadas por la IA (Resolucion_IA de la SÁBANA_MAESTRA) y categoría SLA
+function iaBadgeHTML(op, compacto){
+  if(!op._derivar_ivan) return '';
+  const res = op._resolucion_ia || '';
+  const tip = 'Evaluada por IA' + (res ? ' · Resolución IA: '+res : '') + (op._resolucion_agente ? ' · Agente: '+op._resolucion_agente : '');
+  const txt = (!compacto && res) ? '🤖 IA · '+res : '🤖 Iván IA';
+  return '<span title="'+_urgEsc(tip)+'" style="display:inline-block;background:#F3E5F5;color:#8E44AD;font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;border:1px solid #CE93D8;white-space:nowrap;">'+_urgEsc(txt)+'</span>';
+}
+function catBadgeHTML(op){
+  const c = op._categoria_sla || '';
+  if(!c) return '';
+  const pre = c.includes('Pre');
+  return '<span style="display:inline-block;font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;white-space:nowrap;background:'+(pre?'#FFF3CD':'#E0F3F5')+';color:'+(pre?'#BA7517':'#00808F')+';">'+(pre?'🔶 Pre Aprobación':'🔷 Inmediata')+'</span>';
+}
+
 function opRowHTML(op, p){
   // Todos los analistas en el menú - los afines al producto aparecen primero
   // Andrea aparece al final para productos Chile y al inicio para Brasil
@@ -2289,7 +2305,7 @@ function opRowHTML(op, p){
   const placeholder = p.idType==='CPF' ? 'CPF (se puede completar después)' :
                       p.idType==='ID'  ? 'ID (opcional, puede llegar después)' :
                                           'RUT (opcional, puede llegar después)';
-  const ivanBadge = op._derivar_ivan ? '<span style="display:inline-block;background:#F3E5F5;color:#8E44AD;font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;border:1px solid #CE93D8;white-space:nowrap;">🤖 Iván IA</span>' : '';
+  const ivanBadge = iaBadgeHTML(op) + (op._categoria_sla ? ' '+catBadgeHTML(op) : '');
   return `<div class="op-row${op._needs_review?' needs-review':''}" id="oprow-${op.uid}">
     ${ivanBadge}
     <input type="text" value="${op.identificador}" placeholder="${placeholder}" oninput="updateOp('${op.uid}','identificador',this.value)" style="max-width:180px;">
@@ -2547,6 +2563,8 @@ async function cargarDesdeMaestro(){
     const ru = ops.filter(o=>o.tier==='urgente').length;
     const rnr = ops.filter(o=>o.tier==='normal'&&!esGenPrev(o)).length;
     const rng = ops.filter(o=>o.tier==='normal'&&esGenPrev(o)).length;
+    const nPre = ops.filter(o=>(o.categoria_sla||'').includes('Pre')).length;
+    const nInm = ops.length - nPre;
     // Detectar reingresos del mismo día
     const reingresos = ops.filter(function(op){
       const rutNorm = (op.rut||'').replace(/[\.\-\s]/g,'').toLowerCase();
@@ -2560,6 +2578,7 @@ async function cargarDesdeMaestro(){
       'Se encontraron '+ops.length+' operaciones MHE pendientes:'+
       '\nVencidas: '+rv+' | Urgentes: '+ru+
       '\nNormales analista real: '+rnr+' | Normales producdigital: '+rng+
+      '\n🔶 Pre Aprobación: '+nPre+' | 🔷 Inmediata: '+nInm+' | 🤖 Evaluadas por IA: '+ops.filter(o=>o.derivar_ivan).length+
       (reingresos.length > 0 ? '\n🔁 Reingresos del mismo día (ya evaluadas hoy): '+reingresos.length : '')+
       '\n\nCapacidad MHE disponible: '+capacidadRestante+' ops'+
       '\n\nAceptar = cargar | Cancelar = no cargar'
@@ -2598,6 +2617,8 @@ async function cargarDesdeMaestro(){
           _id_operacion: op.id_operacion,
           _categoria_sla: op.categoria_sla||'Inmediata',
           _derivar_ivan: op.derivar_ivan||false,
+          _resolucion_ia: op.resolucion_ia||'',
+          _resolucion_agente: op.resolucion_agente||'',
           _reingreso: true
         };
         dayOps.push(opReingreso);
@@ -2669,6 +2690,8 @@ async function cargarDesdeMaestro(){
         _horas_habiles: op.horas_habiles,
         _categoria_sla: op.categoria_sla || 'Inmediata',
         _derivar_ivan: op.derivar_ivan || false,
+        _resolucion_ia: op.resolucion_ia || '',
+        _resolucion_agente: op.resolucion_agente || '',
         _needs_review: needsReview  // requiere revisión manual de asignación
       };
       dayOps.push(newOp);
@@ -3052,7 +3075,7 @@ function renderSeguimiento(){
         ${op._reingreso?'<div style="font-size:10px;font-weight:700;color:#8E44AD;">🔁 Reingreso — ya evaluada hoy</div>':''}
         ${op._categoria_sla?`<span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:${(op._categoria_sla||'').includes('Pre')?'#FFF3CD':'#E0F3F5'};color:${(op._categoria_sla||'').includes('Pre')?'#BA7517':'#00808F'}">${(op._categoria_sla||'').includes('Pre')?'🔶 Pre Apr.':'🔷 Inm.'}</span>`:''}
       </td>
-      <td style="text-align:center;">${op._derivar_ivan?'<span style="display:inline-block;background:#F3E5F5;color:#8E44AD;font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;border:1px solid #CE93D8;">🤖 Iván IA</span>':(op._carga_rapida?'<span style="display:inline-block;background:#E0F3F5;color:#00808F;font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;border:1px solid #00CCD1;">⚡ Carga rápida</span>':'<span style="font-size:11px;color:var(--gray-text);">—</span>')}</td>
+      <td style="text-align:center;">${op._derivar_ivan?iaBadgeHTML(op,true):(op._carga_rapida?'<span style="display:inline-block;background:#E0F3F5;color:#00808F;font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;border:1px solid #00CCD1;">⚡ Carga rápida</span>':'<span style="font-size:11px;color:var(--gray-text);">—</span>')}</td>
       <td><div class="analyst-name" style="font-size:13px;">${op.analista||'--'}</div></td>
       <td><select onchange="updateOp('${op.uid}','tier',this.value);buildOpsEntry();" style="font-size:11px;padding:3px 5px;border:1px solid var(--gray-line);border-radius:6px;background:#fff;cursor:pointer;"><option value="normal" ${op.tier==='normal'?'selected':''}>Normal</option><option value="urgente" ${op.tier==='urgente'?'selected':''}>⚡ Urgente</option><option value="vencido" ${op.tier==='vencido'?'selected':''}>🔴 Vencida</option></select></td>
       ${calcSLACell(op)}
