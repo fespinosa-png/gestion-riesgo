@@ -236,6 +236,15 @@ tr:last-child td{border-bottom:none;}
 <!-- PAGE 1: PLANIFICACIÓN -->
 <div class="page active" id="page-plan">
   <div class="panel">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--gray-line);">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span style="font-size:12px;font-weight:700;color:var(--navy);">📅 Fecha a planificar</span>
+        <input type="date" id="plan-date-input" onchange="cambiarFechaPlan(this.value)" style="padding:5px 8px;border:1px solid var(--gray-line);border-radius:6px;font-size:12px;">
+        <button class="btn-secondary" onclick="cambiarFechaPlan(todayISO())" style="font-size:11px;padding:4px 10px;">Hoy</button>
+        <button class="btn-secondary" onclick="cambiarFechaPlan(fechaMasDias(1))" style="font-size:11px;padding:4px 10px;">Mañana</button>
+      </div>
+      <span id="plan-date-status" style="font-size:12px;color:var(--gray-text);"></span>
+    </div>
     <div class="flex-between" style="margin-bottom:14px;">
       <div class="panel-title" style="margin-bottom:0;">Día de operación</div>
       <div class="daytoggle" style="margin-bottom:0;max-width:500px;">
@@ -323,7 +332,7 @@ tr:last-child td{border-bottom:none;}
       <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--gray-text);">
         <label style="font-weight:600;">Fecha del reparto:</label>
         <input type="date" id="confirm-date-input" style="padding:5px 8px;border:1px solid var(--gray-line);border-radius:6px;font-size:12px;"
-          onchange="currentDate=this.value;updateConfirmDateLabel();">
+          onchange="cambiarFechaPlan(this.value);">
         <span style="font-size:11px;color:var(--gray-text);">(puedes asignar para mañana)</span>
       </div>
       <span id="confirm-status" style="font-size:12px;color:var(--gray-text);"></span>
@@ -1927,6 +1936,7 @@ function updateNavForUser(v){
 function initDate(){
   currentDate = todayISO();
   document.getElementById('date-badge').textContent = currentDate;
+  ['plan-date-input','confirm-date-input'].forEach(function(id){ const el=document.getElementById(id); if(el) el.value = currentDate; });
 }
 
 // ─── DAY TYPE ───────────────────────────────────────────────────────────────
@@ -1944,6 +1954,109 @@ function setDayType(t){
   const fdsBtn=document.getElementById('btn-fds'); if(fdsBtn) fdsBtn.classList.toggle('active', t==='FDS');
   savePlanVolsFromMemory();
   recalcPlan();
+}
+
+// ─── CAMBIO DE FECHA DE TRABAJO ──────────────────────────────────────────────
+// Planificación y "Fecha del reparto" comparten una sola fecha. Al cambiarla se recarga TODO lo de esa
+// fecha (volúmenes, tipo de día y disponibilidad) para no arrastrar ni guardar los de otro día.
+function fechaMasDias(n){
+  const d = new Date(); d.setDate(d.getDate()+n);
+  return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+}
+function dayTypeDeFecha(ymd){
+  const d = new Date(ymd+'T12:00:00').getDay();
+  return (d===0||d===6) ? 'FDS' : (d===5 ? 'V' : 'LJ');
+}
+// Volúmenes tal como están en pantalla (lo que el usuario ve), no lo que haya quedado en memoria
+function volsDesdePantalla(){
+  const v = {};
+  PRODUCTS.forEach(function(p){
+    const tv = document.getElementById('vol-'+p.key), tu = document.getElementById('urg-'+p.key);
+    if(!tv) return;
+    const total = Math.max(0, parseInt(tv.value)||0);
+    v[p.key] = {total:total, urgent:Math.min(total, Math.max(0, parseInt(tu&&tu.value)||0))};
+  });
+  return v;
+}
+function _planParse(data){
+  if(!data) return null;
+  try{ return typeof data==='string' ? JSON.parse(data) : data; }catch(e){ return null; }
+}
+function _volsDesdeMeta(meta){   // meta.volumes = {producto:{total,urgent,normal}}
+  const out = {};
+  if(!meta || !meta.volumes) return out;
+  Object.keys(meta.volumes).forEach(function(k){
+    const x = meta.volumes[k] || {};
+    out[k] = {total:parseInt(x.total)||0, urgent:parseInt(x.urgent)||0};
+  });
+  return out;
+}
+function _pintarPlan(origen, cargando){
+  buildProdGrid();
+  document.getElementById('btn-lj')?.classList.toggle('active', dayType==='LJ');
+  document.getElementById('btn-v')?.classList.toggle('active', dayType==='V');
+  document.getElementById('btn-fds')?.classList.toggle('active', dayType==='FDS');
+  renderAvailGrid();
+  recalcPlan();
+  checkPlanFirebaseStatus();
+  const st = document.getElementById('plan-date-status');
+  if(st){
+    const dn = new Date(currentDate+'T12:00:00').toLocaleDateString('es-CL',{weekday:'long',day:'numeric',month:'long'});
+    st.innerHTML = cargando ? '⏳ Cargando '+_urgEsc(dn)+'...'
+      : (origen ? '📅 <b>'+_urgEsc(dn)+'</b> · planificación '+_urgEsc(origen)+'.'
+                : '📅 <b>'+_urgEsc(dn)+'</b> · <span style="color:#BA7517;">sin planificación guardada: ingresa los volúmenes de ese día.</span>');
+  }
+}
+
+async function cambiarFechaPlan(fecha){
+  if(!fecha) return;
+  currentDate = fecha;
+  ['plan-date-input','confirm-date-input'].forEach(function(id){ const el=document.getElementById(id); if(el && el.value!==fecha) el.value = fecha; });
+  const badge = document.getElementById('date-badge'); if(badge) badge.textContent = fecha;
+
+  // 1) Partir limpio y cargar lo de ESTA fecha desde este navegador
+  planVols = {};
+  dayType = dayTypeDeFecha(fecha);
+  TEAM.forEach(function(t){ availability[t.name] = !t.reserve; });
+  let origen = '', availLocal = false;
+  try{
+    const sp = localStorage.getItem('plan:'+fecha);
+    if(sp){
+      const cfg = JSON.parse(sp);
+      if(cfg.dayType) dayType = cfg.dayType;
+      if(cfg.vols && Object.keys(cfg.vols).length){ planVols = cfg.vols; origen = 'guardada en este navegador'; }
+    }
+    const sa = localStorage.getItem('avail:'+fecha);
+    if(sa){
+      const a = JSON.parse(sa);
+      if(TEAM.some(function(t){ return t.name in a; })){ Object.assign(availability, a); availLocal = true; }
+    }
+  }catch(e){}
+  _pintarPlan('', true);
+
+  // 2) Lo confirmado en Firebase (planificacion/ y, si quedó vacía, meta/ con los volúmenes que se veían al confirmar)
+  let remoto = null, meta = null;
+  try{
+    const r = await Promise.all([fbGet('planificacion/'+fecha), fbGet('meta/'+fecha)]);
+    remoto = _planParse(r[0]); meta = _planParse(r[1]);
+  }catch(e){}
+  if(fecha !== currentDate) return;   // el usuario cambió de fecha mientras cargaba
+  if(!Object.keys(planVols).length){
+    if(remoto && remoto.vols && Object.keys(remoto.vols).length){
+      planVols = remoto.vols; origen = 'confirmada en Firebase';
+      if(remoto.dayType) dayType = remoto.dayType;
+    }else{
+      const mv = _volsDesdeMeta(meta);
+      if(Object.keys(mv).length){
+        planVols = mv; origen = 'recuperada de la confirmación del reparto';
+        if(meta.dayType) dayType = meta.dayType;
+      }
+    }
+  }
+  if(!availLocal && remoto && remoto.availability && TEAM.some(function(t){ return t.name in remoto.availability; })){
+    Object.assign(availability, remoto.availability);
+  }
+  _pintarPlan(origen, false);
 }
 
 function savePlanConfig(){
@@ -2783,6 +2896,15 @@ async function confirmDay(){
     if(!proceed) return;
   }
 
+  // Los volúmenes que se guardan deben ser los de ESTA fecha (los que se ven en Planificación)
+  const volsPant = volsDesdePantalla();
+  const totalPant = Object.keys(volsPant).reduce(function(s,k){ return s+volsPant[k].total; }, 0);
+  if(currentDate !== todayISO() || totalPant === 0){
+    const det = PRODUCTS.map(function(p){ return p.name+' '+((volsPant[p.key]||{}).total||0); }).join(' · ');
+    const okVol = window.confirm('Se guardará la planificación del '+currentDate+':\n'+det+'\nTotal: '+totalPant+' operaciones.\n\n¿Son los volúmenes de esa fecha?\nAceptar = confirmar. Cancelar = volver a Planificación a corregirlos.');
+    if(!okVol) return;
+  }
+  savePlanConfig();
   const opsNuevas = dayOps.filter(op=>!op._saved).length;
   statusEl.textContent='Guardando '+(opsNuevas > 0 ? opsNuevas : dayOps.length)+' operación(es)...';
   try{
@@ -2823,7 +2945,7 @@ async function confirmDay(){
           confirmedBy: currentUser||'--',
           confirmedAt: new Date().toISOString(),
           totalOps: dayOps.length,
-          vols: planVols,
+          vols: volsDesdePantalla(),
           teamSize: activeAnalistas,
           availability: Object.assign({}, availability)
         };
@@ -2863,7 +2985,7 @@ async function confirmDay(){
           confirmedBy: currentUser||'--',
           confirmedAt: new Date().toISOString(),
           totalOps: dayOps.length,
-          vols: planVols,
+          vols: volsDesdePantalla(),
           teamSize: activeAnalistas,
           availability: Object.assign({}, availability)
         };
@@ -3898,6 +4020,45 @@ function buildAnalistaFilter(){
   });
 }
 
+// Hoja "Resultados" del Excel del Dashboard: conteos, motivos completos, por analista y por producto
+function crearHojaResultados(XLSX, label){
+  const d = window._dashExport;
+  if(!d) return null;
+  const pct = function(n, t){ return {t:'n', v: t>0 ? n/t : 0, z:'0.0%'}; };
+  const total = d.aprobadas + d.devueltas + d.rechazadas;
+  const f = [];
+  f.push(['RESULTADOS DE OPERACIONES RESUELTAS']);
+  f.push(['Período:', label]);
+  f.push([]);
+  f.push(['Resultado','Cantidad','% sobre operaciones con resultado']);
+  f.push(['Aprobadas', d.aprobadas, pct(d.aprobadas,total)]);
+  f.push(['Devueltas', d.devueltas, pct(d.devueltas,total)]);
+  f.push(['Rechazadas', d.rechazadas, pct(d.rechazadas,total)]);
+  f.push(['Total con resultado', total, pct(total,total)]);
+  f.push(['HECHO sin resultado registrado', d.sinResultado, '']);
+  const bloque = function(titulo, mapa){
+    f.push([]);
+    f.push([titulo,'Cantidad','% sobre el total del grupo']);
+    const items = Object.keys(mapa).map(function(k){ return [k, mapa[k]]; }).sort(function(a,b){ return b[1]-a[1]; });
+    const t = items.reduce(function(s,x){ return s+x[1]; }, 0);
+    if(!items.length) f.push(['Sin registros','','']);
+    items.forEach(function(x){ f.push([x[0], x[1], pct(x[1],t)]); });
+  };
+  bloque('MOTIVOS DE DEVOLUCIÓN', d.motivosDev);
+  bloque('MOTIVOS DE RECHAZO', d.motivosRech);
+  const porGrupo = function(titulo, mapa){
+    f.push([]);
+    f.push([titulo,'Aprobadas','Devueltas','Rechazadas','Total']);
+    Object.keys(mapa).map(function(k){ const m=mapa[k]; return [k,m.aprobada,m.devuelta,m.rechazada,m.aprobada+m.devuelta+m.rechazada]; })
+      .sort(function(a,b){ return b[4]-a[4]; }).forEach(function(r){ f.push(r); });
+  };
+  porGrupo('POR ANALISTA', d.porAnalista);
+  porGrupo('POR PRODUCTO', d.porProducto);
+  const ws = XLSX.utils.aoa_to_sheet(f);
+  ws['!cols'] = [{wch:44},{wch:14},{wch:34},{wch:14},{wch:10}];
+  return ws;
+}
+
 async function exportDashboardExcel(){
   const label = document.getElementById('dashboard-week-label').textContent;
   const btn = document.querySelector('[onclick="exportDashboardExcel()"]');
@@ -3923,6 +4084,10 @@ async function exportDashboardExcel(){
       if(valEl && lblEl) kpiData.push([lblEl.textContent.trim(), valEl.textContent.trim()]);
     });
 
+    if(window._dashExport){
+      const de = window._dashExport;
+      kpiData.push([], ['RESULTADOS REGISTRADOS'], ['Aprobadas', de.aprobadas], ['Devueltas', de.devueltas], ['Rechazadas', de.rechazadas]);
+    }
     const wsKPI = XLSX.utils.aoa_to_sheet(kpiData);
     wsKPI['!cols'] = [{wch:35},{wch:20}];
     XLSX.utils.book_append_sheet(wb, wsKPI, 'Resumen');
@@ -4008,6 +4173,10 @@ async function exportDashboardExcel(){
         XLSX.utils.book_append_sheet(wb, wsSLA, 'Riesgo SLA');
       }
     }
+
+    // ── HOJA 6: RESULTADOS (aprobadas / devueltas / rechazadas) ───────────────
+    const wsRes = crearHojaResultados(XLSX, label);
+    if(wsRes) XLSX.utils.book_append_sheet(wb, wsRes, 'Resultados');
 
     // Descargar
     const filename = 'Dashboard_Creditu_'+new Date().toISOString().slice(0,10)+'.xlsx';
@@ -4591,15 +4760,23 @@ async function loadDashboard(){
     // Resultados por tipo (aprobada/devuelta/rechazada)
     var resAprobadas=0, resDevueltas=0, resRechazadas=0;
     var motivosDev={}, motivosRech={};
+    var resPorAnalista={}, resPorProducto={}, hechasSinResultado=0;
     allOps.forEach(function(op){
-      if(!op._resultado) return;
+      if(!op._resultado){ if(op.estado==='HECHO') hechasSinResultado++; return; }
       var tipo = op._resultado.tipo||'';
       if(tipo==='aprobada') resAprobadas++;
       else if(tipo==='devuelta'){ resDevueltas++; if(op._resultado.motivo) motivosDev[op._resultado.motivo]=(motivosDev[op._resultado.motivo]||0)+1; }
       else if(tipo==='rechazada'){ resRechazadas++; if(op._resultado.motivo) motivosRech[op._resultado.motivo]=(motivosRech[op._resultado.motivo]||0)+1; }
+      else return;
+      var an = op.analista||'Sin asignar', pn = op.productName||op.productKey||'Otro';
+      (resPorAnalista[an] = resPorAnalista[an] || {aprobada:0,devuelta:0,rechazada:0})[tipo]++;
+      (resPorProducto[pn] = resPorProducto[pn] || {aprobada:0,devuelta:0,rechazada:0})[tipo]++;
     });
 
     var totalRes = resAprobadas+resDevueltas+resRechazadas;
+    // Detalle completo para el Excel del Dashboard (respeta el período y el filtro de analista en pantalla)
+    window._dashExport = {aprobadas:resAprobadas, devueltas:resDevueltas, rechazadas:resRechazadas, sinResultado:hechasSinResultado,
+      motivosDev:motivosDev, motivosRech:motivosRech, porAnalista:resPorAnalista, porProducto:resPorProducto};
     var topDev = Object.entries(motivosDev).sort((a,b)=>b[1]-a[1]).slice(0,3);
     var topRech = Object.entries(motivosRech).sort((a,b)=>b[1]-a[1]).slice(0,3);
 
