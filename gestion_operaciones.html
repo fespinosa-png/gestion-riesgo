@@ -223,6 +223,7 @@ tr:last-child td{border-bottom:none;}
   <div class="nav-tab" id="equipo-tab" onclick="goTo('equipo')">Equipo</div>
   <div class="nav-tab" onclick="goTo('historial')">Historial</div>
   <div class="nav-tab" id="nav-dashboard" onclick="goTo('dashboard')">📊 Dashboard</div>
+<div class="nav-tab" id="nav-sla" onclick="goTo('sla')">⏱ SLA</div>
   <div class="right">
     <span class="date-badge" id="date-badge"></span>
     <span id="conn-badge" style="font-size:11px;padding:3px 8px;border-radius:20px;cursor:pointer;" onclick="openSettings()" title="Configuración de conexión"></span>
@@ -474,6 +475,32 @@ tr:last-child td{border-bottom:none;}
   </div>
   <div id="dashboard-body" style="display:flex;flex-direction:column;gap:20px;">
     <div class="loading">Cargando dashboard...</div>
+  </div>
+</div>
+
+<div class="page" id="page-sla">
+  <div class="panel">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+      <div>
+        <div class="panel-title" style="margin:0;">⏱ SLA — Tubo de pendientes</div>
+        <div style="font-size:12px;color:var(--gray-text);margin-top:4px;max-width:760px;">Todas las operaciones pendientes de la sábana, hayan pasado o no por Iván IA. Horas hábiles del SLA oficial (sin fines de semana ni feriados), recalculadas en vivo. Incluye RUT: visible solo para el Jefe de Riesgo.</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <span id="sla-estado" style="font-size:11px;color:var(--gray-text);"></span>
+        <button onclick="exportSLATuboExcel()" style="font-size:12px;padding:6px 14px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;cursor:pointer;">📥 Exportar Excel</button>
+        <button onclick="loadSLATubo()" style="font-size:12px;padding:6px 14px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer;">↻ Actualizar</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+      <select id="sla-f-seg" onchange="renderSLATubo()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;"><option value="">Todos los segmentos</option></select>
+      <select id="sla-f-cat" onchange="renderSLATubo()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;"><option value="">Todas las categorías</option></select>
+      <select id="sla-f-an" onchange="renderSLATubo()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;"><option value="">Todos los analistas</option></select>
+      <select id="sla-f-ia" onchange="renderSLATubo()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;">
+        <option value="">IA: todas</option><option value="conia">Con IA (cualquier resolución)</option><option value="ia100">Aprobadas 100% por IA</option><option value="iaprop">IA con propuesta</option><option value="sinia">Sin IA</option></select>
+      <select id="sla-f-est" onchange="renderSLATubo()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;">
+        <option value="">SLA: todos</option><option value="vencida">Vencidas (≥48 h)</option><option value="urgente">Urgentes (36–48 h)</option><option value="plazo">En plazo (&lt;36 h)</option></select>
+    </div>
+    <div id="sla-body"><div class="empty">Abre la pestaña para consultar la sábana.</div></div>
   </div>
 </div>
 
@@ -1727,6 +1754,197 @@ function calcSLACell(op){
   return '<td style="min-width:110px;"><div style="font-size:11px;font-weight:700;color:'+color+';">'+label+'</div><div style="height:4px;background:var(--gray-line);border-radius:4px;margin-top:3px;"><div style="height:100%;width:'+pct+'%;background:'+color+';border-radius:4px;"></div></div>'+detalle+'</td>';
 }
 
+// ─── PESTAÑA ⏱ SLA: TUBO DE PENDIENTES ──────────────────────────────────────────────────────
+// Todas las operaciones PENDIENTES de la sábana, hayan pasado o no por Iván IA (independiente del flujo de la IA).
+// Las horas son las del SLA oficial (sin fines de semana ni feriados) y se recalculan en vivo.
+var SLA_VENCIDA_H = 48, SLA_URGENTE_H = 36;
+var SLA_COL = {vencida:'#C0392B', urgente:'#E67E22', plazo:'#27AE60'};
+var SLA_ETQ = {vencida:'Vencida (≥48 h)', urgente:'Urgente (36–48 h)', plazo:'En plazo (<36 h)'};
+
+function slaTuboEstado(h){ return h >= SLA_VENCIDA_H ? 'vencida' : (h >= SLA_URGENTE_H ? 'urgente' : 'plazo'); }
+function slaTuboHoras(op, ahoraMs){
+  const ini = sabanaAMs(op.fecha_envio);
+  if(ini !== null) return horasHabilesSLA(ini + SLA_OFFSET_SABANA_H*3600000, ahoraMs);
+  return (typeof op.horas_sabana === 'number' && !isNaN(op.horas_sabana)) ? op.horas_sabana : null;   // respaldo si falta la fecha
+}
+// 'ia100' (Resolucion_IA = APROBADO_100) · 'iaprop' (APROBADO_CON_PROPUESTA) · 'iaotra' (en agente IA / derivada) · 'sinia'
+function slaTuboIA(op){
+  const r = _crNorm(op.resolucion_ia);
+  if(r === 'aprobado_100') return 'ia100';
+  if(r === 'aprobado_con_propuesta') return 'iaprop';
+  return (op.derivar_ivan || op.en_agente_ia) ? 'iaotra' : 'sinia';
+}
+function slaTuboAnalista(op){
+  const a = String(op.analista_actual||'').trim(), n = _crNorm(a).replace(/[^a-z0-9]/g,'');
+  if(!a || n === 'producdigitalriesgo' || n === 'primeraiteracion') return 'Sin analista (genérico)';
+  return a;
+}
+// Calcula KPIs, desgloses y la lista filtrada. f = {segmento, categoria, analista, ia, estado}
+function slaTuboCalcular(ops, ahoraMs, f){
+  f = f || {};
+  const todas = ops.map(function(op){
+    const h = slaTuboHoras(op, ahoraMs);
+    return {op:op, h:h, est:(h === null ? 'plazo' : slaTuboEstado(h)), ia:slaTuboIA(op), an:slaTuboAnalista(op)};
+  });
+  const sel = todas.filter(function(x){
+    if(f.segmento && x.op.segmento !== f.segmento) return false;
+    if(f.categoria && x.op.categoria_sla !== f.categoria) return false;
+    if(f.analista && x.an !== f.analista) return false;
+    if(f.ia === 'conia' && x.ia === 'sinia') return false;
+    if(f.ia && f.ia !== 'conia' && x.ia !== f.ia) return false;
+    if(f.estado && x.est !== f.estado) return false;
+    return true;
+  });
+  sel.sort(function(a,b){ return (b.h === null ? -1 : b.h) - (a.h === null ? -1 : a.h); });
+  const cnt = {vencida:0, urgente:0, plazo:0}; let suma = 0, nh = 0, max = 0;
+  const ia = {con:{n:0,venc:0}, sin:{n:0,venc:0}, ia100:0};
+  sel.forEach(function(x){
+    cnt[x.est]++;
+    if(x.h !== null){ suma += x.h; nh++; if(x.h > max) max = x.h; }
+    const g = (x.ia === 'sinia') ? ia.sin : ia.con;
+    g.n++; if(x.est === 'vencida') g.venc++;
+    if(x.ia === 'ia100') ia.ia100++;
+  });
+  const grupo = function(keyFn){
+    const m = {};
+    sel.forEach(function(x){
+      const k = keyFn(x), g = m[k] || (m[k] = {clave:k, n:0, venc:0, urg:0, suma:0, nh:0});
+      g.n++; if(x.est === 'vencida') g.venc++; if(x.est === 'urgente') g.urg++;
+      if(x.h !== null){ g.suma += x.h; g.nh++; }
+    });
+    return Object.keys(m).map(function(k){ const g = m[k]; g.prom = g.nh ? g.suma/g.nh : 0; return g; })
+      .sort(function(a,b){ return b.venc - a.venc || b.n - a.n; });
+  };
+  const uniq = function(arr){ return arr.filter(function(v,i){ return v && arr.indexOf(v) === i; }).sort(); };
+  return {
+    sel:sel, totalSinFiltro:todas.length,
+    kpi:{total:sel.length, vencidas:cnt.vencida, urgentes:cnt.urgente, plazo:cnt.plazo, prom:nh ? suma/nh : 0, max:max},
+    porSegCat:grupo(function(x){ return (x.op.segmento || '(sin segmento)') + ' · ' + (x.op.categoria_sla || '(sin categoría)'); }),
+    porAnalista:grupo(function(x){ return x.an; }),
+    ia:ia,
+    opciones:{segmentos:uniq(todas.map(function(x){ return x.op.segmento; })), categorias:uniq(todas.map(function(x){ return x.op.categoria_sla; })), analistas:uniq(todas.map(function(x){ return x.an; }))}
+  };
+}
+
+function slaTuboHTML(calc, ahoraMs){
+  const k = calc.kpi, E = _urgEsc;
+  const card = function(v, l, col){
+    return '<div style="flex:1;min-width:120px;background:#F4F7FA;border:1px solid var(--gray-line);border-radius:10px;padding:12px;text-align:center;">'
+      + '<div style="font-size:24px;font-weight:800;color:'+(col||'var(--navy)')+';">'+v+'</div><div style="font-size:11px;color:var(--gray-text);">'+l+'</div></div>';
+  };
+  let h = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">'
+    + card(k.total, 'Pendientes') + card(k.vencidas, 'Vencidas (≥48 h)', SLA_COL.vencida) + card(k.urgentes, 'Urgentes (36–48 h)', SLA_COL.urgente)
+    + card(k.plazo, 'En plazo (<36 h)', SLA_COL.plazo) + card(k.prom.toFixed(1), 'Promedio h hábiles') + '</div>';
+  // Barra de estados
+  if(k.total){
+    const seg = function(n, col){ return n ? '<div title="'+n+'" style="width:'+(n/k.total*100)+'%;background:'+col+';"></div>' : ''; };
+    h += '<div style="display:flex;height:18px;border-radius:9px;overflow:hidden;background:var(--gray-line);margin-bottom:6px;">'
+      + seg(k.vencidas, SLA_COL.vencida) + seg(k.urgentes, SLA_COL.urgente) + seg(k.plazo, SLA_COL.plazo) + '</div>';
+  }
+  h += '<div style="font-size:12px;color:var(--gray-text);margin-bottom:14px;">🤖 Con resolución o paso por IA: <b>'+calc.ia.con.n+'</b> ('+calc.ia.con.venc+' vencidas, '+calc.ia.ia100+' aprobadas 100%)'
+    + ' · Sin IA: <b>'+calc.ia.sin.n+'</b> ('+calc.ia.sin.venc+' vencidas)'
+    + (calc.totalSinFiltro !== k.total ? ' · <span style="color:#BA7517;">filtrado: '+k.total+' de '+calc.totalSinFiltro+'</span>' : '') + '</div>';
+  // Desgloses
+  const tabla = function(titulo, grupos, colTit){
+    let t = '<div style="flex:1;min-width:320px;"><div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:6px;">'+titulo+'</div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:var(--navy);color:#fff;">'
+      + '<th style="padding:5px 8px;text-align:left;">'+colTit+'</th><th style="padding:5px 8px;">Pend.</th><th style="padding:5px 8px;">Venc.</th><th style="padding:5px 8px;">Urg.</th><th style="padding:5px 8px;">Prom. h</th></tr></thead><tbody>';
+    grupos.forEach(function(g){
+      t += '<tr style="border-bottom:1px solid var(--gray-line);"><td style="padding:5px 8px;font-weight:600;">'+E(g.clave)+'</td><td style="padding:5px 8px;text-align:center;">'+g.n+'</td>'
+        + '<td style="padding:5px 8px;text-align:center;color:'+SLA_COL.vencida+';font-weight:700;">'+(g.venc||'—')+'</td><td style="padding:5px 8px;text-align:center;color:'+SLA_COL.urgente+';font-weight:700;">'+(g.urg||'—')+'</td>'
+        + '<td style="padding:5px 8px;text-align:center;">'+g.prom.toFixed(1)+'</td></tr>';
+    });
+    return t + (grupos.length ? '' : '<tr><td colspan="5" style="padding:8px;color:var(--gray-text);">Sin datos</td></tr>') + '</tbody></table></div>';
+  };
+  h += '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:16px;">' + tabla('Por segmento y categoría', calc.porSegCat, 'Segmento · Categoría') + tabla('Por analista actual', calc.porAnalista, 'Analista') + '</div>';
+  // Listado
+  const MAXF = 300;
+  h += '<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:6px;">Detalle (de mayor a menor tiempo)'+(calc.sel.length > MAXF ? ' — primeras '+MAXF+' de '+calc.sel.length+'; el Excel trae todas' : '')+'</div>'
+    + '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:var(--navy);color:#fff;">'
+    + ['ID operación','RUT','Segmento','Categoría','Analista actual','Iter.','Horas hábiles','SLA','IA'].map(function(t){ return '<th style="padding:6px 8px;text-align:left;white-space:nowrap;">'+t+'</th>'; }).join('')
+    + '</tr></thead><tbody>';
+  const IAETQ = {ia100:'🤖 IA 100%', iaprop:'🤖 IA con propuesta', iaotra:'🤖 En agente IA', sinia:'—'};
+  calc.sel.slice(0, MAXF).forEach(function(x){
+    const col = SLA_COL[x.est], op = x.op;
+    h += '<tr style="border-bottom:1px solid var(--gray-line);border-left:4px solid '+col+';">'
+      + '<td style="padding:5px 8px;font-weight:600;">'+E(op.id_operacion)+'</td><td style="padding:5px 8px;white-space:nowrap;">'+E(op.rut)+'</td>'
+      + '<td style="padding:5px 8px;">'+E(op.segmento)+'</td><td style="padding:5px 8px;">'+E(op.categoria_sla)+'</td>'
+      + '<td style="padding:5px 8px;">'+E(x.an)+'</td><td style="padding:5px 8px;text-align:center;">'+(op.nro_iteracion||'')+'</td>'
+      + '<td style="padding:5px 8px;text-align:right;font-weight:700;">'+(x.h === null ? '—' : x.h.toFixed(1))+'</td>'
+      + '<td style="padding:5px 8px;color:'+col+';font-weight:700;white-space:nowrap;">'+SLA_ETQ[x.est]+'</td>'
+      + '<td style="padding:5px 8px;white-space:nowrap;'+(x.ia === 'sinia' ? 'color:var(--gray-text);' : 'color:#8E44AD;font-weight:600;')+'">'+IAETQ[x.ia]+'</td></tr>';
+  });
+  if(!calc.sel.length) h += '<tr><td colspan="9" style="padding:14px;text-align:center;color:var(--gray-text);">No hay operaciones con esos filtros.</td></tr>';
+  return h + '</tbody></table></div>';
+}
+
+function slaTuboFiltros(){
+  const v = function(id){ const el = document.getElementById(id); return el ? el.value : ''; };
+  return {segmento:v('sla-f-seg'), categoria:v('sla-f-cat'), analista:v('sla-f-an'), ia:v('sla-f-ia'), estado:v('sla-f-est')};
+}
+function _slaPoblar(id, valores, etiquetaTodos){
+  const el = document.getElementById(id); if(!el) return;
+  const actual = el.value;
+  el.innerHTML = '<option value="">'+etiquetaTodos+'</option>' + valores.map(function(v){ return '<option value="'+_urgEsc(v)+'">'+_urgEsc(v)+'</option>'; }).join('');
+  if(valores.indexOf(actual) >= 0) el.value = actual;
+}
+function renderSLATubo(){
+  const d = window._slaTubo, body = document.getElementById('sla-body');
+  if(!body || !d) return;
+  const ahora = Date.now();
+  body.innerHTML = slaTuboHTML(slaTuboCalcular(d.ops, ahora, slaTuboFiltros()), ahora);
+  const est = document.getElementById('sla-estado');
+  if(est) est.textContent = 'Sábana consultada a las '+new Date(d.cargadoEn).toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'})+' · horas recalculadas a las '+new Date(ahora).toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});
+}
+async function loadSLATubo(){
+  const est = document.getElementById('sla-estado'), body = document.getElementById('sla-body');
+  if(est) est.textContent = '⏳ Consultando la sábana...';
+  try{
+    const r = await gsCall('getSLATubo', {});
+    if(r.error){
+      if(body) body.innerHTML = '<div style="padding:14px;border:1px solid #F5C6CB;background:#FFF5F5;border-radius:8px;font-size:13px;color:#C0392B;"><b>No se pudo leer el tubo:</b> '+_urgEsc(r.error)
+        +'<div style="margin-top:6px;color:var(--gray-text);">Si el mensaje habla de una acción desconocida, falta agregar la línea <code>getSLATubo</code> en Código.gs y crear una nueva versión de la implementación.</div></div>';
+      if(est) est.textContent = '';
+      return;
+    }
+    window._slaTubo = {ops:r.ops || [], generado:r.generado, avisos:r.avisos || [], cargadoEn:Date.now()};
+    const calc0 = slaTuboCalcular(window._slaTubo.ops, Date.now(), {});
+    _slaPoblar('sla-f-seg', calc0.opciones.segmentos, 'Todos los segmentos');
+    _slaPoblar('sla-f-cat', calc0.opciones.categorias, 'Todas las categorías');
+    _slaPoblar('sla-f-an', calc0.opciones.analistas, 'Todos los analistas');
+    renderSLATubo();
+  }catch(e){
+    if(body) body.innerHTML = '<div style="padding:14px;border:1px solid #F5C6CB;background:#FFF5F5;border-radius:8px;font-size:13px;color:#C0392B;">No hubo respuesta del Apps Script: '+_urgEsc(e.message)+'</div>';
+    if(est) est.textContent = '';
+  }
+}
+function exportSLATuboExcel(){
+  const d = window._slaTubo;
+  if(!d || !d.ops.length){ alert('Primero espera a que cargue el tubo.'); return; }
+  const ahora = Date.now(), calc = slaTuboCalcular(d.ops, ahora, slaTuboFiltros());
+  const filas = [['ID operación','RUT','Segmento','Categoría SLA','Analista actual','Analista anterior','Iteración','Fecha envío (sábana)','Horas hábiles (ahora)','Estado SLA','Resolución IA','En agente IA','Resolución agente','Derivar a Iván']];
+  calc.sel.forEach(function(x){
+    const o = x.op;
+    filas.push([o.id_operacion, o.rut, o.segmento, o.categoria_sla, x.an, o.analista_anterior, o.nro_iteracion, o.fecha_envio,
+      x.h === null ? '' : Math.round(x.h*10)/10, SLA_ETQ[x.est], o.resolucion_ia, o.en_agente_ia ? 'Sí' : 'No', o.resolucion_agente, o.derivar_ivan ? 'Sí' : 'No']);
+  });
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(filas);
+  ws['!cols'] = [{wch:14},{wch:14},{wch:18},{wch:16},{wch:22},{wch:22},{wch:9},{wch:20},{wch:14},{wch:18},{wch:24},{wch:12},{wch:20},{wch:12}];
+  XLSX.utils.book_append_sheet(wb, ws, 'Tubo SLA');
+  const k = calc.kpi, res = [['TUBO DE PENDIENTES — SLA'],['Calculado:', new Date(ahora).toLocaleString('es-CL')],[],
+    ['Pendientes', k.total],['Vencidas (≥48 h hábiles)', k.vencidas],['Urgentes (36–48 h)', k.urgentes],['En plazo (<36 h)', k.plazo],['Promedio horas hábiles', Math.round(k.prom*10)/10],[],
+    ['POR SEGMENTO Y CATEGORÍA','Pendientes','Vencidas','Urgentes','Prom. h']];
+  calc.porSegCat.forEach(function(g){ res.push([g.clave, g.n, g.venc, g.urg, Math.round(g.prom*10)/10]); });
+  res.push([], ['POR ANALISTA ACTUAL','Pendientes','Vencidas','Urgentes','Prom. h']);
+  calc.porAnalista.forEach(function(g){ res.push([g.clave, g.n, g.venc, g.urg, Math.round(g.prom*10)/10]); });
+  const wr = XLSX.utils.aoa_to_sheet(res); wr['!cols'] = [{wch:44},{wch:12},{wch:10},{wch:10},{wch:10}];
+  XLSX.utils.book_append_sheet(wb, wr, 'Resumen');
+  XLSX.writeFile(wb, 'Tubo_SLA_'+todayISO()+'.xlsx');
+}
+// Las horas corren: se recalculan cada minuto mientras la pestaña está abierta
+setInterval(function(){ const p = document.getElementById('page-sla'); if(p && p.classList.contains('active') && window._slaTubo) renderSLATubo(); }, 60000);
+
 function fmtDate(iso){ return iso || '--'; }
 
 function roleBadgeClass(name){
@@ -1839,7 +2057,7 @@ function buildAbsenceDetail(analysts, absentList){
 
 function goTo(tab){
   // Planificación y Operaciones solo para Jefe de Riesgo
-  const jefeOnly = ['plan','ops'];
+  const jefeOnly = ['plan','ops','sla'];
   if(jefeOnly.includes(tab) && currentUser && currentUser !== JEFE){
     const u = currentUser.trim().toLowerCase();
     if(u !== JEFE.toLowerCase() && u !== 'jefe' && u !== 'jefe de riesgo'){
@@ -1850,10 +2068,11 @@ function goTo(tab){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('page-'+tab).classList.add('active');
-  const tabs = {plan:0,ops:1,seguimiento:2,miturno:3,equipo:4,historial:5,dashboard:6};
+  const tabs = {plan:0,ops:1,seguimiento:2,miturno:3,equipo:4,historial:5,dashboard:6,sla:7};
   document.querySelectorAll('.nav-tab')[tabs[tab]].classList.add('active');
   if(tab==='seguimiento') loadSeguimiento();
   if(tab==='historial') loadHistorial();
+  if(tab==='sla') loadSLATubo();
   if(tab==='dashboard'){ buildMesSelector(); buildAnalistaFilter(); loadDashboard(); }
   if(tab==='ops'){ ensureTeamReady().then(()=>loadOpsForToday()).then(()=>{ buildOpsEntry(); updateConfirmDateLabel(); updateDraftBadge(); }); }
   if(tab==='miturno') loadMiTurno();
@@ -1987,7 +2206,7 @@ function updateNavForUser(v){
   if(miTurnoTab) miTurnoTab.style.display = (v && !isJefe) ? 'flex' : 'none';
   // Planificación y Operaciones: opacos y con tooltip para no-Jefe
   document.querySelectorAll('.nav-tab').forEach((tab, idx) => {
-    if(idx === 0 || idx === 1 || idx === 4){ // Planificación, Operaciones y Equipo
+    if(idx === 0 || idx === 1 || idx === 4 || idx === 7){ // Planificación, Operaciones, Equipo y SLA
       tab.style.opacity = isJefe ? '1' : '0.4';
       tab.title = isJefe ? '' : 'Solo disponible para el Jefe de Riesgo';
       tab.style.cursor = isJefe ? 'pointer' : 'not-allowed';
@@ -1997,7 +2216,8 @@ function updateNavForUser(v){
   if(!isJefe && v){
     const planActive = document.getElementById('page-plan').classList.contains('active');
     const opsActive = document.getElementById('page-ops').classList.contains('active');
-    if(planActive || opsActive) goTo('seguimiento');
+    const slaActive = document.getElementById('page-sla').classList.contains('active');
+    if(planActive || opsActive || slaActive) goTo('seguimiento');
   }
 }
 
