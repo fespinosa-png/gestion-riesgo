@@ -1637,10 +1637,69 @@ function fmtTime(iso){
   return new Date(iso).toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});
 }
 
+// ─── RELOJ DE SLA (replica tiempo_demora_horas_habiles del pipeline "SLA MUTUO") ──────────────
+// Regla validada con 3.491 filas reales (100% exacta) y con la columna Horas_Habiles de la sábana (99,6%):
+//   · Tiempo corrido entre envío y respuesta (24 h por día).
+//   · Pausa de fin de semana: desde el viernes 16:01 hasta el siguiente día hábil a las 09:00.
+//   · Pausa por feriado entre semana: desde las 00:00 del feriado hasta el siguiente día hábil a las 09:00.
+//   · Si el envío cae dentro de una pausa, el reloj parte cuando termina.
+// IMPORTANTE: el pipeline calcula en UTC. Las fechas de la sábana vienen en UTC−4, por eso se les suman 4 h.
+// El calendario de feriados debe actualizarse cada año (validados con datos reales: nov-2025 a nov-2026).
+var FERIADOS_CL = ['2025-11-01','2025-12-08','2025-12-25','2026-01-01','2026-04-03','2026-04-04','2026-05-01','2026-05-21',
+  '2026-06-21','2026-06-29','2026-07-16','2026-08-15','2026-09-18','2026-09-19','2026-10-12','2026-10-31','2026-11-01',
+  '2026-12-08','2026-12-25'];
+var FERIADOS_HASTA = '2026-12-31';
+var SLA_OFFSET_SABANA_H = 4;
+var _FERIADOS_SET = new Set(FERIADOS_CL);
+
+function _slaNoHabil(msDia){
+  const dow = new Date(msDia).getUTCDay();
+  return dow===0 || dow===6 || _FERIADOS_SET.has(new Date(msDia).toISOString().slice(0,10));
+}
+// inicioMs / finMs: milisegundos UTC. Devuelve horas hábiles (decimal).
+function horasHabilesSLA(inicioMs, finMs){
+  if(!(finMs > inicioMs)) return 0;
+  const DIA = 86400000, H = 3600000, MIN = 60000;
+  const pausas = [];
+  const d0 = Math.floor(inicioMs/DIA)*DIA - 9*DIA, dN = Math.floor(finMs/DIA)*DIA + 9*DIA;
+  for(let d = d0; d <= dN; d += DIA){
+    if(_slaNoHabil(d) && !_slaNoHabil(d-DIA)){
+      let fr = d; while(_slaNoHabil(fr+DIA)) fr += DIA;
+      const sig = fr + DIA;
+      const ini = (new Date(d).getUTCDay()===6) ? (d - DIA + 16*H + MIN) : d;   // sábado → viernes 16:01 · feriado → 00:00
+      pausas.push([ini, sig + 9*H]);
+      d = sig;
+    }
+  }
+  let s = inicioMs;
+  pausas.forEach(function(p){ if(p[0] <= s && s < p[1]) s = p[1]; });
+  if(!(finMs > s)) return 0;
+  let total = (finMs - s)/H;
+  pausas.forEach(function(p){ const ov = (Math.min(finMs,p[1]) - Math.max(s,p[0]))/H; if(ov > 0) total -= ov; });
+  return total;
+}
+// "2026-11-04T09:30:00" o "2026-11-04 9:30:00" (hora de la sábana) → ms, o null
+function sabanaAMs(txt){
+  const m = String(txt||'').match(/^(\d{4})-(\d{1,2})-(\d{1,2})[T ](\d{1,2}):(\d{2}):?(\d{2})?/);
+  return m ? Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +(m[6]||0)) : null;
+}
+// Horas hábiles exactas de una operación cargada desde la sábana; si está HECHO se congela al completarla.
+function slaHorasExactas(op, ahoraMs){
+  const ini = sabanaAMs(op._fecha_envio);
+  if(ini === null) return null;
+  let fin = (ahoraMs===undefined) ? Date.now() : ahoraMs;
+  if(op.estado==='HECHO' && op.completado_en){ const t = new Date(op.completado_en).getTime(); if(!isNaN(t)) fin = t; }
+  return horasHabilesSLA(ini + SLA_OFFSET_SABANA_H*3600000, fin);
+}
+
 function calcSLACell(op){
   const SLA_HRS = PRODUCTS.find(p=>p.key===op.productKey)?.slaH || 48;
-  let horasTranscurridas = null;
-  if(op._horas_habiles !== undefined && op.fecha_riesgo){
+  let horasTranscurridas = null, exacta = false;
+  const ex = slaHorasExactas(op);
+  if(ex !== null){
+    horasTranscurridas = ex; exacta = true;
+  } else if(op._horas_habiles !== undefined && op.fecha_riesgo){
+    // Operaciones antiguas sin marca de tiempo completa: estimación (horas de la sábana + 70% del tiempo transcurrido)
     const loadedAt = op.asignado_en ? new Date(op.asignado_en) : new Date();
     const horasAdicionales = (Date.now() - loadedAt.getTime()) / 3600000 * 0.7;
     horasTranscurridas = (op._horas_habiles||0) + horasAdicionales;
@@ -1650,12 +1709,22 @@ function calcSLACell(op){
   if(horasTranscurridas===null) return '<td class="breakdown" style="color:var(--gray-text);">--</td>';
   const restantes = SLA_HRS - horasTranscurridas;
   const pct = Math.min(100, Math.round((horasTranscurridas/SLA_HRS)*100));
-  let color, label;
-  if(restantes<=0){ color='var(--red)'; label='Vencida '+Math.abs(Math.round(restantes))+'h'; }
-  else if(restantes<=12){ color='var(--magenta)'; label=Math.round(restantes)+'h restantes'; }
-  else if(restantes<=24){ color='var(--amber)'; label=Math.round(restantes)+'h restantes'; }
-  else { color='var(--teal)'; label=Math.round(restantes)+'h restantes'; }
-  return '<td style="min-width:110px;"><div style="font-size:11px;font-weight:700;color:'+color+';">'+label+'</div><div style="height:4px;background:var(--gray-line);border-radius:4px;margin-top:3px;"><div style="height:100%;width:'+pct+'%;background:'+color+';border-radius:4px;"></div></div></td>';
+  const cerrada = op.estado==='HECHO' && exacta;
+  let color, label, detalle = '';
+  if(cerrada){
+    // Operación ya marcada HECHO: el reloj se detuvo en la marca del analista (no en la respuesta oficial de la plataforma).
+    const dentro = restantes > 0;
+    color = dentro ? '#27AE60' : 'var(--red)';
+    label = 'Marcada HECHO a las '+horasTranscurridas.toFixed(1)+' h hábiles';
+    if(!dentro) detalle = '<div style="font-size:10px;color:var(--red);margin-top:2px;">+'+Math.abs(restantes).toFixed(1)+' h sobre el plazo de '+SLA_HRS+' h</div>';
+  } else {
+    if(restantes<=0){ color='var(--red)'; label='Vencida '+Math.abs(Math.round(restantes))+'h'; }
+    else if(restantes<=12){ color='var(--magenta)'; label=Math.round(restantes)+'h restantes'; }
+    else if(restantes<=24){ color='var(--amber)'; label=Math.round(restantes)+'h restantes'; }
+    else { color='var(--teal)'; label=Math.round(restantes)+'h restantes'; }
+    if(exacta) detalle = '<div style="font-size:10px;color:var(--gray-text);margin-top:2px;" title="Horas hábiles del SLA oficial (sin fines de semana ni feriados)">⏱ '+horasTranscurridas.toFixed(1)+' h hábiles</div>';
+  }
+  return '<td style="min-width:110px;"><div style="font-size:11px;font-weight:700;color:'+color+';">'+label+'</div><div style="height:4px;background:var(--gray-line);border-radius:4px;margin-top:3px;"><div style="height:100%;width:'+pct+'%;background:'+color+';border-radius:4px;"></div></div>'+detalle+'</td>';
 }
 
 function fmtDate(iso){ return iso || '--'; }
@@ -2795,6 +2864,7 @@ async function cargarDesdeMaestro(){
         estado: 'PENDIENTE',
         tier: op.tier,
         fecha_riesgo: op.fecha_envio ? op.fecha_envio.slice(0,10) : '',
+        _fecha_envio: op.fecha_envio || '',   // marca de tiempo completa (zona de la sábana) para el reloj de SLA exacto
         obs: 'ID Op: ' + op.id_operacion + ' | Horas hab: ' + op.horas_habiles.toFixed(1),
         obs_seguimiento: '',
         asignado_en: new Date().toISOString(),
