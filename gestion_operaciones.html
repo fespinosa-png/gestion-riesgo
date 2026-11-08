@@ -360,6 +360,8 @@ tr:last-child td{border-bottom:none;}
       Si el botón aparece atenuado (opaco), selecciona tu nombre en el menú arriba a la derecha para activar tu turno.
     </div>
     <div class="stats-row" id="seg-stats"></div>
+    <div id="seg-cat-resumen"></div>
+    <div id="seg-feriados-aviso"></div>
     <div id="seg-analista-bars" style="margin-bottom:14px;display:flex;flex-wrap:wrap;gap:10px;"></div>
     <div class="filters">
       <span class="filter-label">Filtrar:</span>
@@ -370,6 +372,12 @@ tr:last-child td{border-bottom:none;}
         <option value="HECHO">Hecho</option>
       </select>
       <select id="filter-producto" onchange="renderSeguimiento()"><option value="">Todos los productos</option></select>
+      <select id="filter-categoria" onchange="renderSeguimiento()">
+        <option value="">Todas las categorías</option>
+        <option value="Inmediata">🔷 Inmediata</option>
+        <option value="Pre Aprobación">🔶 Pre Aprobación</option>
+        <option value="__sin">Sin categoría (manual / carga rápida)</option>
+      </select>
       <button id="btn-filter-review" onclick="toggleFilterReview()" style="padding:6px 12px;border-radius:6px;border:1px solid var(--magenta);background:var(--white);color:var(--magenta);font-size:12px;font-weight:600;cursor:pointer;">⚠ Revisar asignación</button>
     </div>
     <table>
@@ -452,6 +460,12 @@ tr:last-child td{border-bottom:none;}
     <div style="display:flex;gap:8px;align-items:center;">
       <select id="db-filter-analista" onchange="loadDashboard()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;color:var(--navy);background:#fff;">
         <option value="">👥 Todos los analistas</option>
+      </select>
+      <select id="db-filter-categoria" onchange="loadDashboard()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;color:var(--navy);background:#fff;">
+        <option value="">🏷 Todas las categorías</option>
+        <option value="Inmediata">🔷 Inmediata</option>
+        <option value="Pre Aprobación">🔶 Pre Aprobación</option>
+        <option value="__sin">Sin categoría</option>
       </select>
       <button onclick="exportDashboardExcel()" style="font-size:12px;padding:6px 14px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;cursor:pointer;">📥 Exportar Excel</button>
     </div>
@@ -1678,6 +1692,24 @@ var FERIADOS_CL = ['2025-11-01','2025-12-08','2025-12-25','2026-01-01','2026-04-
 var FERIADOS_HASTA = '2026-12-31';
 var SLA_OFFSET_SABANA_H = 4;
 var _FERIADOS_SET = new Set(FERIADOS_CL);
+// Estado del calendario: 'ok' | 'por_vencer' (quedan 45 días o menos) | 'vencido'
+function feriadosEstado(ahoraMs){
+  const ahora = (ahoraMs === undefined) ? Date.now() : ahoraMs;
+  const finMs = Date.UTC(+FERIADOS_HASTA.slice(0,4), +FERIADOS_HASTA.slice(5,7)-1, +FERIADOS_HASTA.slice(8,10), 23, 59, 59);
+  if(ahora > finMs) return {estado:'vencido', dias:0};
+  const dias = Math.ceil((finMs - ahora)/86400000);
+  return {estado: dias <= 45 ? 'por_vencer' : 'ok', dias:dias};
+}
+function feriadosAvisoHTML(ahoraMs){
+  const f = feriadosEstado(ahoraMs);
+  if(f.estado === 'ok') return '';
+  const vencido = f.estado === 'vencido';
+  return '<div style="margin:0 0 12px 0;padding:10px 14px;border-radius:8px;font-size:12px;'
+    + (vencido ? 'background:#FDECEA;border:1px solid #C0392B;color:#C0392B;' : 'background:#FFF4E5;border:1px solid #E67E22;color:#A85B00;') + '">'
+    + (vencido ? '🔴 <b>El calendario de feriados del SLA venció el '+FERIADOS_HASTA+'.</b> Las horas hábiles ya no descuentan los feriados nuevos y pueden verse infladas.'
+               : '⚠ <b>El calendario de feriados del SLA llega hasta el '+FERIADOS_HASTA+'</b> (quedan '+f.dias+' días).')
+    + ' Hay que cargar la lista oficial del año siguiente en <code>FERIADOS_CL</code> y actualizar <code>FERIADOS_HASTA</code>.</div>';
+}
 
 function _slaNoHabil(msDia){
   const dow = new Date(msDia).getUTCDay();
@@ -1749,7 +1781,7 @@ function calcSLACell(op){
     else if(restantes<=12){ color='var(--magenta)'; label=Math.round(restantes)+'h restantes'; }
     else if(restantes<=24){ color='var(--amber)'; label=Math.round(restantes)+'h restantes'; }
     else { color='var(--teal)'; label=Math.round(restantes)+'h restantes'; }
-    if(exacta) detalle = '<div style="font-size:10px;color:var(--gray-text);margin-top:2px;" title="Horas hábiles del SLA oficial (sin fines de semana ni feriados)">⏱ '+horasTranscurridas.toFixed(1)+' h hábiles</div>';
+    if(exacta) detalle = '<div style="font-size:10px;color:var(--gray-text);margin-top:2px;" title="Horas hábiles del SLA oficial (sin fines de semana ni feriados)'+(feriadosEstado().estado==='vencido'?' · ATENCIÓN: el calendario de feriados está vencido':'')+'">⏱ '+horasTranscurridas.toFixed(1)+' h hábiles'+(feriadosEstado().estado==='vencido'?' ⚠':'')+'</div>';
   }
   return '<td style="min-width:110px;"><div style="font-size:11px;font-weight:700;color:'+color+';">'+label+'</div><div style="height:4px;background:var(--gray-line);border-radius:4px;margin-top:3px;"><div style="height:100%;width:'+pct+'%;background:'+color+';border-radius:4px;"></div></div>'+detalle+'</td>';
 }
@@ -1832,7 +1864,7 @@ function slaTuboHTML(calc, ahoraMs){
     return '<div style="flex:1;min-width:120px;background:#F4F7FA;border:1px solid var(--gray-line);border-radius:10px;padding:12px;text-align:center;">'
       + '<div style="font-size:24px;font-weight:800;color:'+(col||'var(--navy)')+';">'+v+'</div><div style="font-size:11px;color:var(--gray-text);">'+l+'</div></div>';
   };
-  let h = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">'
+  let h = feriadosAvisoHTML(ahoraMs) + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">'
     + card(k.total, 'Pendientes') + card(k.vencidas, 'Vencidas (≥48 h)', SLA_COL.vencida) + card(k.urgentes, 'Urgentes (36–48 h)', SLA_COL.urgente)
     + card(k.plazo, 'En plazo (<36 h)', SLA_COL.plazo) + card(k.prom.toFixed(1), 'Promedio h hábiles') + '</div>';
   // Barra de estados
@@ -2676,6 +2708,51 @@ function removeOpAndRefresh(uid){
   buildOpsEntry();
 }
 
+// ─── CATEGORÍA SLA: Inmediata vs Pre Aprobación ───────────────────────────────────────────────
+// Clave para filtros y desgloses: 'Inmediata' | 'Pre Aprobación' | '__sin' (ingresadas a mano o por carga rápida)
+function catClave(op){
+  const c = String((op && op._categoria_sla) || '').trim();
+  if(!c) return '__sin';
+  return c.toLowerCase().indexOf('pre') >= 0 ? 'Pre Aprobación' : 'Inmediata';
+}
+function catEtiqueta(k){ return k==='Inmediata' ? '🔷 Inmediata' : (k==='Pre Aprobación' ? '🔶 Pre Aprobación' : 'Sin categoría'); }
+function catTexto(k){ return k==='Inmediata' ? 'Inmediata' : (k==='Pre Aprobación' ? 'Pre Aprobación' : 'Sin categoría'); }
+// Agrega por categoría: asignadas, hechas, pendientes, vencidas, urgentes y resultados registrados
+function resumenPorCategoria(ops){
+  const base = function(){ return {n:0, hechas:0, pend:0, venc:0, urg:0, aprob:0, dev:0, rech:0}; };
+  const m = {'Inmediata':base(), 'Pre Aprobación':base(), '__sin':base()};
+  (ops||[]).forEach(function(op){
+    const g = m[catClave(op)]; g.n++;
+    if(op.estado === 'HECHO') g.hechas++;
+    else { const t = String(op.tier||'').toLowerCase(); g.pend++; if(t==='vencido') g.venc++; else if(t==='urgente') g.urg++; }
+    const r = op._resultado && op._resultado.tipo;
+    if(r === 'aprobada') g.aprob++; else if(r === 'devuelta') g.dev++; else if(r === 'rechazada') g.rech++;
+  });
+  return m;
+}
+// Tabla comparativa para el Dashboard (vacía si no hay ninguna operación con categoría)
+function categoriaSeccionHTML(pc, filtroCat){
+  if(pc['Inmediata'].n + pc['Pre Aprobación'].n === 0) return '';
+  const pct = function(a, b){ return b > 0 ? Math.round(a/b*100)+'%' : '—'; };
+  let h = '<div style="background:#fff;border:1px solid var(--gray-line);border-radius:12px;padding:16px;">'
+    + '<div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:4px;">Aprobaciones vs pre-aprobaciones — por categoría</div>'
+    + '<div style="font-size:11px;color:var(--gray-text);margin-bottom:12px;">Compara ambas categorías'+(filtroCat ? ' (este cuadro no depende del filtro de categoría)' : '')+'. El % de aprobación se calcula sobre las operaciones con resultado registrado.</div>'
+    + '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:var(--navy);color:#fff;">'
+    + ['Categoría','Asignadas','Hechas','% cumpl.','Pendientes','Vencidas','Aprobadas','Devueltas','Rechazadas','% aprobación'].map(function(t,i){ return '<th style="padding:6px 8px;text-align:'+(i?'center':'left')+';">'+t+'</th>'; }).join('')
+    + '</tr></thead><tbody>';
+  ['Inmediata','Pre Aprobación','__sin'].forEach(function(k){
+    const g = pc[k]; if(!g.n) return;
+    const res = g.aprob + g.dev + g.rech;
+    h += '<tr style="border-bottom:1px solid var(--gray-line);"><td style="padding:6px 8px;font-weight:700;">'+catEtiqueta(k)+'</td>'
+      + '<td style="padding:6px 8px;text-align:center;">'+g.n+'</td><td style="padding:6px 8px;text-align:center;color:#27AE60;font-weight:700;">'+g.hechas+'</td>'
+      + '<td style="padding:6px 8px;text-align:center;font-weight:700;">'+pct(g.hechas,g.n)+'</td><td style="padding:6px 8px;text-align:center;">'+g.pend+'</td>'
+      + '<td style="padding:6px 8px;text-align:center;color:#C0392B;font-weight:700;">'+(g.venc||'—')+'</td>'
+      + '<td style="padding:6px 8px;text-align:center;color:#27AE60;">'+g.aprob+'</td><td style="padding:6px 8px;text-align:center;color:#BA7517;">'+g.dev+'</td>'
+      + '<td style="padding:6px 8px;text-align:center;color:#C0392B;">'+g.rech+'</td><td style="padding:6px 8px;text-align:center;font-weight:700;">'+pct(g.aprob,res)+'</td></tr>';
+  });
+  return h + '</tbody></table></div></div>';
+}
+
 // Marca de operaciones evaluadas por la IA (Resolucion_IA de la SÁBANA_MAESTRA) y categoría SLA
 function iaBadgeHTML(op, compacto){
   if(!op._derivar_ivan) return '';
@@ -3416,8 +3493,9 @@ function renderSeguimiento(){
   const fa=document.getElementById('filter-analista').value;
   const fe=document.getElementById('filter-estado').value;
   const fp=document.getElementById('filter-producto').value;
+  const fc=document.getElementById('filter-categoria')?.value||'';
   let ops=seguimientoOps.filter(o=>
-    (!fa||o.analista===fa)&&(!fe||o.estado===fe)&&(!fp||o.productKey===fp)&&
+    (!fa||o.analista===fa)&&(!fe||o.estado===fe)&&(!fp||o.productKey===fp)&&(!fc||catClave(o)===fc)&&
     (!_filterReview||o._needs_review)
   );
 
@@ -3430,6 +3508,19 @@ function renderSeguimiento(){
     <div class="stat ${total-hechos>0?'warn':'ok'}"><div class="snum">${total-hechos}</div><div class="slbl">Pendientes</div></div>
     <div class="stat ${pct<50?'warn':'ok'}"><div class="snum">${pct}%</div><div class="slbl">Avance</div></div>
   `;
+  // Resumen por categoría (todo el día; no depende de los filtros de la tabla)
+  const catEl = document.getElementById('seg-cat-resumen');
+  if(catEl){
+    const pc = resumenPorCategoria(seguimientoOps);
+    catEl.innerHTML = (pc['Inmediata'].n + pc['Pre Aprobación'].n > 0)
+      ? '<div style="font-size:12px;color:var(--gray-text);margin:0 0 10px 0;">'
+        + ['Inmediata','Pre Aprobación','__sin'].filter(function(k){ return pc[k].n > 0; }).map(function(k){
+            const g = pc[k]; return '<span style="margin-right:16px;"><b>'+catEtiqueta(k)+':</b> '+g.n+' ('+g.hechas+' hechas · '+Math.round(g.hechas/g.n*100)+'%)</span>';
+          }).join('') + '</div>'
+      : '';
+  }
+  const fvEl = document.getElementById('seg-feriados-aviso');
+  if(fvEl) fvEl.innerHTML = feriadosAvisoHTML();
   // Barras de progreso por analista
   const barsEl = document.getElementById('seg-analista-bars');
   if(barsEl && seguimientoOps.length){
@@ -4310,6 +4401,24 @@ function buildAnalistaFilter(){
   });
 }
 
+// Hoja "Por categoría" del Excel del Dashboard (Inmediata vs Pre Aprobación)
+function crearHojaCategorias(XLSX, label){
+  const d = window._dashCategorias;
+  if(!d) return null;
+  const pc = d.porCategoria;
+  const pct = function(a, b){ return {t:'n', v: b > 0 ? a/b : 0, z:'0.0%'}; };
+  const f = [['APROBACIONES VS PRE-APROBACIONES — POR CATEGORÍA'], ['Período:', label],
+    ['Filtro de analista:', d.filtroAnalista || 'Todos'], ['Nota:', 'Compara ambas categorías (respeta el filtro de analista, no el de categoría)'], [],
+    ['Categoría','Asignadas','HECHO','% cumplimiento','Pendientes','Vencidas','Urgentes','Aprobadas','Devueltas','Rechazadas','% aprobación (sobre con resultado)']];
+  ['Inmediata','Pre Aprobación','__sin'].forEach(function(k){
+    const g = pc[k]; if(!g.n) return;
+    f.push([catTexto(k), g.n, g.hechas, pct(g.hechas,g.n), g.pend, g.venc, g.urg, g.aprob, g.dev, g.rech, pct(g.aprob, g.aprob+g.dev+g.rech)]);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(f);
+  ws['!cols'] = [{wch:20},{wch:11},{wch:9},{wch:16},{wch:11},{wch:10},{wch:10},{wch:11},{wch:11},{wch:12},{wch:34}];
+  return ws;
+}
+
 // Hoja "Resultados" del Excel del Dashboard: conteos, motivos completos, por analista y por producto
 function crearHojaResultados(XLSX, label){
   const d = window._dashExport;
@@ -4377,6 +4486,12 @@ async function exportDashboardExcel(){
     if(window._dashExport){
       const de = window._dashExport;
       kpiData.push([], ['RESULTADOS REGISTRADOS'], ['Aprobadas', de.aprobadas], ['Devueltas', de.devueltas], ['Rechazadas', de.rechazadas]);
+    }
+    if(window._dashCategorias){
+      const dc = window._dashCategorias, fl = [];
+      if(dc.filtroAnalista) fl.push('Analista: '+dc.filtroAnalista);
+      if(dc.filtroCategoria) fl.push('Categoría: '+catTexto(dc.filtroCategoria));
+      if(fl.length) kpiData.splice(3, 0, ['Filtros activos:', fl.join(' · ')]);
     }
     const wsKPI = XLSX.utils.aoa_to_sheet(kpiData);
     wsKPI['!cols'] = [{wch:35},{wch:20}];
@@ -4467,6 +4582,9 @@ async function exportDashboardExcel(){
     // ── HOJA 6: RESULTADOS (aprobadas / devueltas / rechazadas) ───────────────
     const wsRes = crearHojaResultados(XLSX, label);
     if(wsRes) XLSX.utils.book_append_sheet(wb, wsRes, 'Resultados');
+    // ── HOJA 7: POR CATEGORÍA (Inmediata vs Pre Aprobación) ────────────────────
+    const wsCat = crearHojaCategorias(XLSX, label);
+    if(wsCat) XLSX.utils.book_append_sheet(wb, wsCat, 'Por categoría');
 
     // Descargar
     const filename = 'Dashboard_Creditu_'+new Date().toISOString().slice(0,10)+'.xlsx';
@@ -4892,9 +5010,18 @@ async function loadDashboard(){
     if(filtroAnalista){
       allOps = allOps.filter(function(o){ return o.analista===filtroAnalista; });
     }
+    // Comparativo por categoría: respeta el filtro de analista, pero NO el de categoría (así siempre se ven ambas)
+    var opsComparativo = allOps.slice();
+    const filtroCategoria = document.getElementById('db-filter-categoria')?.value || '';
+    if(filtroCategoria){
+      allOps = allOps.filter(function(o){ return catClave(o)===filtroCategoria; });
+    }
+    var porCategoria = resumenPorCategoria(opsComparativo);
+    window._dashCategorias = {porCategoria:porCategoria, filtroAnalista:filtroAnalista, filtroCategoria:filtroCategoria};
+    var categoriaSecHTML = categoriaSeccionHTML(porCategoria, filtroCategoria);
 
     if(!allOps.length){
-      body.innerHTML = '<div class="empty">Sin datos para este período'+(filtroAnalista?' (analista: '+filtroAnalista+')':'')+'.</div>';
+      body.innerHTML = '<div class="empty">Sin datos para este período'+(filtroAnalista?' (analista: '+filtroAnalista+')':'')+(filtroCategoria?' (categoría: '+catTexto(filtroCategoria)+')':'')+'.</div>';
       return;
     }
 
@@ -5417,6 +5544,8 @@ async function loadDashboard(){
       + '</div>'
       // RESULTADOS
       + resultadosHTML
+      // CATEGORÍA (aprobaciones vs pre-aprobaciones)
+      + categoriaSecHTML
       // IVAN
       + ivanHTML
       // PROYECCIÓN DEL TUBO
@@ -5544,7 +5673,7 @@ async function exportHistorialExcel(){
     if(!data){ alert('No hay datos en el historial.'); return; }
 
     // HOJA 1: Resumen por día
-    const resumen = [['Fecha','Día','Planificadas','Asignadas','HECHO','PENDIENTE','% Cumpl.','Vencidas','Urgentes']];
+    const resumen = [['Fecha','Día','Planificadas','Asignadas','HECHO','PENDIENTE','% Cumpl.','Vencidas','Urgentes','Inmediata','Pre Aprobación','Sin categoría']];
     const fechas = Object.keys(data).sort();
 
     for(const fecha of fechas){
@@ -5556,15 +5685,16 @@ async function exportHistorialExcel(){
       const venc = ops.filter(o=>o.estado==='PENDIENTE'&&(o.tier||'').toLowerCase()==='vencido').length;
       const urg = ops.filter(o=>o.estado==='PENDIENTE'&&(o.tier||'').toLowerCase()==='urgente').length;
       const dayName = new Date(fecha+'T12:00:00').toLocaleDateString('es-CL',{weekday:'long'});
-      resumen.push([fecha, dayName, ops[0]?.planificado||'-', ops.length, hechas, pend, pct+'%', venc||'-', urg||'-']);
+      const cc = resumenPorCategoria(ops);
+      resumen.push([fecha, dayName, ops[0]?.planificado||'-', ops.length, hechas, pend, pct+'%', venc||'-', urg||'-', cc['Inmediata'].n, cc['Pre Aprobación'].n, cc['__sin'].n]);
     }
 
     const wsResumen = XLSX.utils.aoa_to_sheet(resumen);
-    wsResumen['!cols'] = [{wch:14},{wch:12},{wch:14},{wch:12},{wch:10},{wch:12},{wch:12},{wch:10},{wch:10}];
+    wsResumen['!cols'] = [{wch:14},{wch:12},{wch:14},{wch:12},{wch:10},{wch:12},{wch:12},{wch:10},{wch:10},{wch:11},{wch:15},{wch:14}];
     XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen por día');
 
     // HOJA 2: Detalle de todas las operaciones
-    const detalle = [['Fecha','Producto','Identificador','Analista','Estado','Tier','Resultado','Motivo','Observación','Completado en']];
+    const detalle = [['Fecha','Producto','Identificador','Analista','Estado','Tier','Resultado','Motivo','Observación','Completado en','Categoría SLA']];
 
     // Cargar resultados de todos los días
     let todosResultados = {};
@@ -5594,13 +5724,14 @@ async function exportHistorialExcel(){
           resultado?.tipo||'',
           resultado?.motivo||'',
           resultado?.obs||'',
-          op.completado_en ? new Date(op.completado_en).toLocaleString('es-CL') : ''
+          op.completado_en ? new Date(op.completado_en).toLocaleString('es-CL') : '',
+          catTexto(catClave(op))
         ]);
       });
     }
 
     const wsDetalle = XLSX.utils.aoa_to_sheet(detalle);
-    wsDetalle['!cols'] = [{wch:14},{wch:20},{wch:16},{wch:14},{wch:10},{wch:10},{wch:12},{wch:25},{wch:30},{wch:18}];
+    wsDetalle['!cols'] = [{wch:14},{wch:20},{wch:16},{wch:14},{wch:10},{wch:10},{wch:12},{wch:25},{wch:30},{wch:18},{wch:16}];
     XLSX.utils.book_append_sheet(wb, wsDetalle, 'Detalle operaciones');
 
     const filename = 'Historial_Creditu_'+new Date().toISOString().slice(0,10)+'.xlsx';
