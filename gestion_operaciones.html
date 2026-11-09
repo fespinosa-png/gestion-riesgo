@@ -1453,7 +1453,8 @@ async function fbPing(){
 const GS_MHE_URL = 'https://script.google.com/macros/s/AKfycbwq97TBEzQRJOBB03L2FUt96vVzInP0ZCltpNospZY9ynOZCP_ALRG1UnMNhJ-dMtNc/exec';
 
 async function gsCall(action, params, _retry){
-  const payload = JSON.stringify({action, ...params});
+  const idToken = await fbToken();   // identifica al usuario ante el script, que lo verifica con Firebase
+  const payload = JSON.stringify({action, ...params, idToken});
   _retry = _retry || 0;
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
