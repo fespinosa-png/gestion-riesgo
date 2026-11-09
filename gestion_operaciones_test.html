@@ -1179,7 +1179,8 @@ async function copiarProduccionAPrueba(){
   if(!_sesionPrueba()) return;
   if(!confirm('Se REEMPLAZARÁ todo lo que haya en la zona de prueba con una copia de los datos reales.\nLos datos reales NO se modifican (solo se leen).\n\n¿Continuar?')) return;
   try{
-    const r = await fetch(_PROD_URL + '.json');
+    const tokenLectura = await fbToken();
+    const r = await fetch(_PROD_URL + '.json' + (tokenLectura ? '?auth=' + tokenLectura : ''));   // lectura de producción con tu sesión
     if(!r.ok) throw new Error('No se pudo leer producción: ' + r.status);
     const data = await r.json();
     if(!data || typeof data !== 'object') throw new Error('Producción devolvió contenido vacío');
@@ -1420,11 +1421,31 @@ function initFirebaseAuth(){
         const sel = document.getElementById('user-select');
         if(sel) sel.value = match;
       }
+      _fbPostLogin(user);
     } else {
       _fbUser = null;
       showAuthOverlay();
     }
   });
+}
+
+// Al abrir la página, el equipo se lee ANTES de que Firebase confirme la sesión (esa lectura sale sin token).
+// Con la lectura pública cerrada fallaría y se usaría el equipo por defecto: por eso se recarga apenas hay sesión.
+async function _fbPostLogin(user){
+  try{
+    await loadTeamFromGS();
+    renderEquipo(); initUserSelect(); updateCapLabels();
+  }catch(e){ console.log('No se pudo recargar el equipo tras iniciar sesión:', e); }
+  try{
+    if(!currentUser){
+      const match = matchGoogleEmailToTeam(user.email);
+      if(match){
+        setCurrentUser(match);
+        const sel = document.getElementById('user-select');
+        if(sel) sel.value = match;
+      }
+    }
+  }catch(e){}
 }
 
 function showAuthOverlay(){
