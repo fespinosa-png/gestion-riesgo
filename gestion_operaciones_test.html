@@ -501,25 +501,43 @@ tr:last-child td{border-bottom:none;}
   <div class="panel">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
       <div>
-        <div class="panel-title" style="margin:0;">⏱ SLA — Tubo de pendientes</div>
-        <div style="font-size:12px;color:var(--gray-text);margin-top:4px;max-width:760px;">Todas las operaciones pendientes de la sábana, hayan pasado o no por Iván IA. Horas hábiles del SLA oficial (sin fines de semana ni feriados), recalculadas en vivo. Incluye RUT: visible solo para el Jefe de Riesgo.</div>
+        <div class="panel-title" style="margin:0;">⏱ SLA — Pendientes y resueltas</div>
+        <div style="font-size:12px;color:var(--gray-text);margin-top:4px;max-width:780px;"><b>Pendientes:</b> todas las de la sábana, hayan pasado o no por Iván IA, con horas en vivo (incluye RUT). <b>Resueltas:</b> SLA oficial de las operaciones ya respondidas, solo cifras agregadas. Visible solo para el Jefe de Riesgo.</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         <span id="sla-estado" style="font-size:11px;color:var(--gray-text);"></span>
-        <button onclick="exportSLATuboExcel()" style="font-size:12px;padding:6px 14px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;cursor:pointer;">📥 Exportar Excel</button>
-        <button onclick="loadSLATubo()" style="font-size:12px;padding:6px 14px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer;">↻ Actualizar</button>
+        <button onclick="slaExportar()" style="font-size:12px;padding:6px 14px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-weight:600;cursor:pointer;">📥 Exportar Excel</button>
+        <button onclick="slaActualizar()" style="font-size:12px;padding:6px 14px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer;">↻ Actualizar</button>
       </div>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
-      <select id="sla-f-seg" onchange="renderSLATubo()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;"><option value="">Todos los segmentos</option></select>
-      <select id="sla-f-cat" onchange="renderSLATubo()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;"><option value="">Todas las categorías</option></select>
-      <select id="sla-f-an" onchange="renderSLATubo()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;"><option value="">Todos los analistas</option></select>
-      <select id="sla-f-ia" onchange="renderSLATubo()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;">
-        <option value="">IA: todas</option><option value="conia">Con IA (cualquier resolución)</option><option value="ia100">Aprobadas 100% por IA</option><option value="iaprop">IA con propuesta</option><option value="sinia">Sin IA</option></select>
-      <select id="sla-f-est" onchange="renderSLATubo()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;">
-        <option value="">SLA: todos</option><option value="vencida">Vencidas (≥48 h)</option><option value="urgente">Urgentes (36–48 h)</option><option value="plazo">En plazo (&lt;36 h)</option></select>
+    <div style="display:flex;gap:6px;margin-bottom:14px;">
+      <button id="sla-tab-tubo" onclick="slaCambiarVista('tubo')" style="font-size:12px;padding:6px 14px;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;font-weight:700;cursor:pointer;">⏳ Pendientes (tubo)</button>
+      <button id="sla-tab-res" onclick="slaCambiarVista('res')" style="font-size:12px;padding:6px 14px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-weight:700;cursor:pointer;">✅ Resueltas (SLA histórico)</button>
     </div>
-    <div id="sla-body"><div class="empty">Abre la pestaña para consultar la sábana.</div></div>
+    <div id="sla-vista-tubo">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+        <select id="sla-f-seg" onchange="renderSLATubo()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;"><option value="">Todos los segmentos</option></select>
+        <select id="sla-f-cat" onchange="renderSLATubo()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;"><option value="">Todas las categorías</option></select>
+        <select id="sla-f-an" onchange="renderSLATubo()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;"><option value="">Todos los analistas</option></select>
+        <select id="sla-f-ia" onchange="renderSLATubo()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;">
+          <option value="">IA: todas</option><option value="conia">Con IA (cualquier resolución)</option><option value="ia100">Aprobadas 100% por IA</option><option value="iaprop">IA con propuesta</option><option value="sinia">Sin IA</option></select>
+        <select id="sla-f-est" onchange="renderSLATubo()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;">
+          <option value="">SLA: todos</option><option value="vencida">Vencidas (≥48 h)</option><option value="urgente">Urgentes (36–48 h)</option><option value="plazo">En plazo (&lt;36 h)</option></select>
+      </div>
+      <div id="sla-body"><div class="empty">Abre la pestaña para consultar la sábana.</div></div>
+    </div>
+    <div id="sla-vista-res" style="display:none;">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
+        <select id="sla-r-preset" onchange="slaResPresetCambio()" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;">
+          <option value="mes_act">Mes en curso</option><option value="mes_ant">Mes anterior</option><option value="sem_act">Semana en curso</option><option value="sem_pas">Semana pasada</option><option value="30d">Últimos 30 días</option><option value="anio">Año en curso</option><option value="custom">Personalizado…</option></select>
+        <span id="sla-r-custom" style="display:none;gap:6px;align-items:center;font-size:12px;">
+          <input type="date" id="sla-r-desde" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;"> a <input type="date" id="sla-r-hasta" style="font-size:12px;padding:6px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;">
+          <button onclick="slaResConsultar()" style="font-size:12px;padding:6px 14px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer;">Consultar</button>
+        </span>
+        <span id="sla-r-rango" style="font-size:12px;color:var(--gray-text);"></span>
+      </div>
+      <div id="sla-res-body"><div class="empty">Elige un período para consultar.</div></div>
+    </div>
   </div>
 </div>
 
@@ -1142,14 +1160,23 @@ function handleRequest(params) {
 })();
 // 2) Copia de datos reales → zona de prueba (solo LEE producción; solo ESCRIBE en gestion_test)
 var _PROD_URL = 'https://asignador-de-operaciones-default-rtdb.firebaseio.com/gestion';
+function _sesionPrueba(){
+  if(typeof _fbUser === 'undefined' || !_fbUser){
+    alert('Primero ingresa con tu cuenta Creditú (pantalla azul "Ingresar con cuenta Creditú").\nSin sesión, Firebase rechaza las escrituras con error 401.');
+    return false;
+  }
+  return true;
+}
 async function _fbRaizPrueba(metodo, valor){
   if(!/\/gestion_test$/.test(FB_BASE)) throw new Error('Protección: FB_BASE no apunta a la zona de prueba. No se escribió nada.');
+  if(typeof _fbUser === 'undefined' || !_fbUser) throw new Error('No has ingresado con tu cuenta Creditú.');
   const token = await fbToken();
   const r = await fetch(FB_BASE + '.json' + (token ? '?auth=' + token : ''), {method:metodo, body:JSON.stringify(valor), headers:{'Content-Type':'application/json'}});
-  if(!r.ok) throw new Error('Firebase error ' + r.status);
+  if(!r.ok) throw new Error(r.status === 401 ? 'Firebase rechazó la escritura (401). Si ya ingresaste, las reglas de Firebase no permiten escribir en gestion_test.' : 'Firebase error ' + r.status);
 }
 async function copiarProduccionAPrueba(){
   if(!/\/gestion_test$/.test(FB_BASE)){ alert('Protección: esta página no apunta a la zona de prueba. No se hizo nada.'); return; }
+  if(!_sesionPrueba()) return;
   if(!confirm('Se REEMPLAZARÁ todo lo que haya en la zona de prueba con una copia de los datos reales.\nLos datos reales NO se modifican (solo se leen).\n\n¿Continuar?')) return;
   try{
     const r = await fetch(_PROD_URL + '.json');
@@ -1163,6 +1190,7 @@ async function copiarProduccionAPrueba(){
 }
 async function vaciarZonaPrueba(){
   if(!/\/gestion_test$/.test(FB_BASE)){ alert('Protección: esta página no apunta a la zona de prueba. No se hizo nada.'); return; }
+  if(!_sesionPrueba()) return;
   if(!confirm('Se BORRARÁ todo lo que haya en la zona de prueba.\nLos datos reales no se tocan.\n\n¿Continuar?')) return;
   try{ await _fbRaizPrueba('PUT', null); alert('Zona de prueba vaciada. Se recargará la página.'); location.reload(); }
   catch(e){ alert('Error al vaciar: ' + e.message); }
@@ -2021,6 +2049,177 @@ function exportSLATuboExcel(){
   XLSX.utils.book_append_sheet(wb, wr, 'Resumen');
   XLSX.writeFile(wb, 'Tubo_SLA_'+todayISO()+'.xlsx');
 }
+// ─── VISTA "RESUELTAS": SLA oficial de las operaciones ya respondidas (cifras agregadas de la sábana) ─────
+// El Apps Script resume la sábana en el servidor (acción getSLAResueltas): no viaja ningún RUT ni ID.
+var _slaVista = 'tubo';
+function slaCambiarVista(v){
+  _slaVista = v;
+  const t = document.getElementById('sla-vista-tubo'), r = document.getElementById('sla-vista-res');
+  if(t) t.style.display = (v === 'tubo') ? '' : 'none';
+  if(r) r.style.display = (v === 'res') ? '' : 'none';
+  [['sla-tab-tubo','tubo'],['sla-tab-res','res']].forEach(function(p){
+    const b = document.getElementById(p[0]); if(!b) return;
+    const act = (p[1] === v);
+    b.style.background = act ? 'var(--navy)' : '#fff'; b.style.color = act ? '#fff' : 'var(--navy)';
+  });
+  if(v === 'res' && !window._slaRes) slaResConsultar();
+}
+function slaActualizar(){ if(_slaVista === 'res') slaResConsultar(); else loadSLATubo(); }
+function slaExportar(){ if(_slaVista === 'res') exportSLAResExcel(); else exportSLATuboExcel(); }
+
+function slaHoyChile(){ return new Date().toLocaleDateString('en-CA', {timeZone:'America/Santiago'}); }
+function slaSumaDias(ymd, n){ const p = ymd.split('-'); return new Date(Date.UTC(+p[0], +p[1]-1, +p[2]+n)).toISOString().slice(0,10); }
+// Rango de fechas (por fecha de respuesta) de cada opción del selector
+function slaResRango(preset, hoy){
+  hoy = hoy || slaHoyChile();
+  const dow = new Date(hoy + 'T12:00:00Z').getUTCDay();
+  const lunes = slaSumaDias(hoy, -((dow + 6) % 7));
+  switch(preset){
+    case 'sem_act': return {desde:lunes, hasta:hoy};
+    case 'sem_pas': return {desde:slaSumaDias(lunes, -7), hasta:slaSumaDias(lunes, -1)};
+    case 'mes_ant': { const hasta = slaSumaDias(hoy.slice(0,8) + '01', -1); return {desde:hasta.slice(0,8) + '01', hasta:hasta}; }
+    case '30d':     return {desde:slaSumaDias(hoy, -29), hasta:hoy};
+    case 'anio':    return {desde:hoy.slice(0,4) + '-01-01', hasta:hoy};
+    default:        return {desde:hoy.slice(0,8) + '01', hasta:hoy};      // mes en curso
+  }
+}
+function slaFmtRango(r){
+  const f = function(y){ const p = y.split('-'); return +p[2] + ' ' + ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'][+p[1]-1] + ' ' + p[0]; };
+  return f(r.desde) + ' al ' + f(r.hasta);
+}
+function slaResPresetCambio(){
+  const v = document.getElementById('sla-r-preset').value;
+  const c = document.getElementById('sla-r-custom'); if(c) c.style.display = (v === 'custom') ? 'inline-flex' : 'none';
+  if(v !== 'custom') slaResConsultar();
+}
+
+// Variación contra el período anterior (mejorBajo: en horas, bajar es mejor; en % y volumen, subir)
+function slaDeltaHTML(a, b, nAnt, u, mejorBajo, neutro){
+  if(!nAnt) return '<div style="font-size:10px;color:var(--gray-text);margin-top:2px;">sin período anterior</div>';
+  const d = Math.round((a - b) * 10) / 10;
+  if(d === 0) return '<div style="font-size:10px;color:var(--gray-text);margin-top:2px;">= período anterior</div>';
+  const col = neutro ? 'var(--gray-text)' : (((mejorBajo ? d < 0 : d > 0)) ? '#27AE60' : '#C0392B');
+  return '<div style="font-size:10px;color:'+col+';font-weight:700;margin-top:2px;">'+(d > 0 ? '▲ +' : '▼ ')+d+u+' vs ant. ('+b+u+')</div>';
+}
+function slaColPct(p){ return p >= 80 ? '#27AE60' : (p >= 50 ? '#BA7517' : '#C0392B'); }
+
+function slaResHTML(r){
+  const A = r.actual, S = A.resumen, P = r.anterior.resumen, E = _urgEsc;
+  const nm = function(x){ return (x === undefined || x === null) ? 0 : x; };
+  const card = function(v, l, sub, col){
+    return '<div style="flex:1;min-width:140px;background:#F4F7FA;border:1px solid var(--gray-line);border-radius:10px;padding:12px;text-align:center;">'
+      + '<div style="font-size:24px;font-weight:800;color:'+(col||'var(--navy)')+';">'+v+'</div><div style="font-size:11px;color:var(--gray-text);">'+l+'</div>'+(sub||'')+'</div>';
+  };
+  if(!S.total){
+    return '<div class="empty">No hay operaciones resueltas con fecha de respuesta entre '+slaFmtRango(r.periodo)+'.</div>'
+      + (r.avisos && r.avisos.length ? '<div style="font-size:11px;color:var(--gray-text);margin-top:8px;">'+r.avisos.map(E).join('<br>')+'</div>' : '');
+  }
+  let h = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">'
+    + card(S.total, 'Resueltas', slaDeltaHTML(S.total, nm(P.total), nm(P.total), '', false, true))
+    + card(S.prom.toFixed(1), 'SLA promedio (h hábiles)', slaDeltaHTML(S.prom, P.prom, P.n, ' h', true))
+    + card(S.pct48.toFixed(1)+'%', 'Dentro de '+r.limites.h1+' h', slaDeltaHTML(S.pct48, P.pct48, P.n, ' pp', false), slaColPct(S.pct48))
+    + card(S.pct24.toFixed(1)+'%', 'Dentro de '+r.limites.h2+' h', slaDeltaHTML(S.pct24, P.pct24, P.n, ' pp', false))
+    + card(S.mediana.toFixed(1), 'Mediana (h)', slaDeltaHTML(S.mediana, P.mediana, P.n, ' h', true))
+    + card(Number(S.p90).toFixed(1), 'P90 (h): el 90% se resolvió en menos', slaDeltaHTML(S.p90, P.p90, P.n, ' h', true))
+    + '</div>';
+  // Mezcla de resultados
+  const R = A.resoluciones, tot = R.aprobada + R.propuesta + R.devuelta + R.rechazada;
+  const COL = {aprobada:'#27AE60', propuesta:'#1ABC9C', devuelta:'#E67E22', rechazada:'#C0392B'};
+  const ETQ = {aprobada:'Aprobada 100%', propuesta:'Aprobada con propuesta', devuelta:'Devuelta a comercial', rechazada:'Rechazada'};
+  const pc = function(n){ return tot ? Math.round(n/tot*100) : 0; };
+  h += '<div style="display:flex;height:16px;border-radius:8px;overflow:hidden;background:var(--gray-line);margin-bottom:6px;">'
+    + ['aprobada','propuesta','devuelta','rechazada'].map(function(k){ return R[k] ? '<div title="'+ETQ[k]+': '+R[k]+'" style="width:'+(R[k]/tot*100)+'%;background:'+COL[k]+';"></div>' : ''; }).join('') + '</div>'
+    + '<div style="font-size:12px;color:var(--gray-text);margin-bottom:16px;">'
+    + ['aprobada','propuesta','devuelta','rechazada'].map(function(k){ return '<span style="margin-right:14px;"><span style="color:'+COL[k]+';">■</span> '+ETQ[k]+' <b>'+R[k]+'</b> ('+pc(R[k])+'%)</span>'; }).join('') + '</div>';
+  // Tablas
+  const fila = function(etq, g, negrita){
+    return '<tr style="border-bottom:1px solid var(--gray-line);"><td style="padding:5px 8px;'+(negrita ? 'font-weight:700;' : 'font-weight:600;')+'">'+E(etq)+'</td>'
+      + '<td style="padding:5px 8px;text-align:center;">'+g.n+'</td><td style="padding:5px 8px;text-align:center;font-weight:700;">'+g.prom.toFixed(1)+'</td>'
+      + '<td style="padding:5px 8px;text-align:center;">'+g.mediana.toFixed(1)+'</td><td style="padding:5px 8px;text-align:center;">'+Number(g.p90).toFixed(1)+'</td>'
+      + '<td style="padding:5px 8px;text-align:center;font-weight:700;color:'+slaColPct(g.pct48)+';">'+g.pct48.toFixed(1)+'%</td>'
+      + '<td style="padding:5px 8px;text-align:center;">'+g.pct24.toFixed(1)+'%</td></tr>';
+  };
+  const tabla = function(titulo, colTit, filas, nota){
+    return '<div style="flex:1;min-width:340px;"><div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:6px;">'+titulo+'</div>'
+      + '<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:var(--navy);color:#fff;">'
+      + '<th style="padding:5px 8px;text-align:left;">'+colTit+'</th><th style="padding:5px 8px;">Resueltas</th><th style="padding:5px 8px;">Prom. h</th><th style="padding:5px 8px;">Mediana</th><th style="padding:5px 8px;">P90</th><th style="padding:5px 8px;">≤'+r.limites.h1+' h</th><th style="padding:5px 8px;">≤'+r.limites.h2+' h</th></tr></thead><tbody>'
+      + (filas || '<tr><td colspan="7" style="padding:8px;color:var(--gray-text);">Sin datos</td></tr>') + '</tbody></table>'
+      + (nota ? '<div style="font-size:10px;color:var(--gray-text);margin-top:4px;">'+nota+'</div>' : '') + '</div>';
+  };
+  const ITER = {'1':'1ª iteración','2':'2ª iteración','3':'3ª iteración','4':'4ª iteración','5+':'5ª o más','(s/d)':'(sin dato)'};
+  const wrap = function(a, b){ return '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:16px;">'+a+b+'</div>'; };
+  h += wrap(
+    tabla('Por segmento y categoría', 'Segmento · Categoría', A.porSegCat.map(function(g){ return fila(g.clave, g); }).join('')),
+    tabla('Por iteración (1ª vs reingresos)', 'Iteración', A.porIteracion.map(function(g){ return fila(ITER[g.clave] || g.clave, g); }).join('')));
+  h += wrap(
+    tabla('Por resolución', 'Resolución', A.porResolucion.map(function(g){ return fila(ETQ[g.clave] || g.clave, g); }).join('')),
+    tabla('Con IA vs sin IA', 'Uso de IA', (A.porIA.con.n ? fila('Con IA (cualquier resolución)', A.porIA.con) : '') + (A.porIA.sin.n ? fila('Sin IA', A.porIA.sin) : '')));
+  h += wrap(
+    tabla('Por analista', 'Analista', A.porAnalista.map(function(g){ return fila(g.clave, g); }).join(''), 'Según la columna Analista_Riesgo de la sábana. Conviene validar que identifica a quien resolvió antes de usarla para evaluar personas.'),
+    A.porMes.length > 1 ? tabla('Tendencia mensual', 'Mes (por fecha de respuesta)', A.porMes.map(function(g){ return fila(g.clave, g); }).join('')) : '<div style="flex:1;min-width:340px;"></div>');
+  h += '<div style="font-size:11px;color:var(--gray-text);line-height:1.5;border-top:1px solid var(--gray-line);padding-top:8px;">'
+    + '<b>Cómo se calcula:</b> operaciones resueltas (aprobadas, aprobadas con propuesta, devueltas y rechazadas) con fecha de respuesta entre <b>'+slaFmtRango(r.periodo)+'</b>. '
+    + 'Tiempo = columna <code>Horas_Habiles</code> de la SÁBANA_MAESTRA (sin fines de semana ni feriados). "Dentro de '+r.limites.h1+' h" cuenta las que tardaron '+r.limites.h1+' h o menos. '
+    + 'Comparado con los '+(slaFmtRango(r.anterior.periodo))+'. Incluye todas las operaciones de la sábana, no solo las del gestor.'
+    + (r.avisos && r.avisos.length ? '<br><span style="color:#BA7517;">⚠ '+r.avisos.map(E).join(' · ')+'</span>' : '') + '</div>';
+  return h;
+}
+
+async function slaResConsultar(){
+  const est = document.getElementById('sla-estado'), body = document.getElementById('sla-res-body');
+  const preset = document.getElementById('sla-r-preset') ? document.getElementById('sla-r-preset').value : 'mes_act';
+  let rango;
+  if(preset === 'custom'){
+    const d = document.getElementById('sla-r-desde').value, h = document.getElementById('sla-r-hasta').value;
+    if(!d || !h || d > h){ if(body) body.innerHTML = '<div class="empty">Elige las dos fechas (desde ≤ hasta).</div>'; return; }
+    rango = {desde:d, hasta:h};
+  } else { rango = slaResRango(preset); }
+  const rg = document.getElementById('sla-r-rango'); if(rg) rg.textContent = slaFmtRango(rango);
+  if(est) est.textContent = '⏳ Consultando la sábana...';
+  try{
+    const r = await gsCall('getSLAResueltas', {desde:rango.desde, hasta:rango.hasta});
+    if(r.error){
+      if(body) body.innerHTML = '<div style="padding:14px;border:1px solid #F5C6CB;background:#FFF5F5;border-radius:8px;font-size:13px;color:#C0392B;"><b>No se pudo calcular el SLA:</b> '+_urgEsc(r.error)
+        + '<div style="margin-top:6px;color:var(--gray-text);">Si el mensaje habla de una acción desconocida, falta agregar la línea <code>getSLAResueltas</code> en Código.gs y crear una nueva versión de la implementación.</div></div>';
+      if(est) est.textContent = ''; return;
+    }
+    window._slaRes = {r:r, cargadoEn:Date.now()};
+    if(body) body.innerHTML = slaResHTML(r);
+    if(est) est.textContent = 'Sábana consultada a las ' + new Date().toLocaleTimeString('es-CL', {hour:'2-digit', minute:'2-digit'});
+  }catch(e){
+    if(body) body.innerHTML = '<div style="padding:14px;border:1px solid #F5C6CB;background:#FFF5F5;border-radius:8px;font-size:13px;color:#C0392B;">No hubo respuesta del Apps Script: '+_urgEsc(e.message)+'</div>';
+    if(est) est.textContent = '';
+  }
+}
+
+function exportSLAResExcel(){
+  const d = window._slaRes;
+  if(!d){ alert('Primero consulta un período.'); return; }
+  const r = d.r, A = r.actual, S = A.resumen, P = r.anterior.resumen;
+  const wb = XLSX.utils.book_new();
+  const add = function(nombre, filas, anchos){
+    const ws = XLSX.utils.aoa_to_sheet(filas); ws['!cols'] = anchos.map(function(w){ return {wch:w}; }); XLSX.utils.book_append_sheet(wb, ws, nombre);
+  };
+  add('Resumen', [
+    ['SLA DE OPERACIONES RESUELTAS — SÁBANA_MAESTRA'], ['Período (por fecha de respuesta):', slaFmtRango(r.periodo)], ['Período anterior:', slaFmtRango(r.anterior.periodo)], ['Consultado:', new Date(d.cargadoEn).toLocaleString('es-CL')], [],
+    ['Indicador','Período','Anterior'],
+    ['Resueltas', S.total, P.total], ['Con horas hábiles', S.n, P.n], ['SLA promedio (h hábiles)', S.prom, P.prom], ['Mediana (h)', S.mediana, P.mediana], ['P90 (h)', S.p90, P.p90],
+    ['% dentro de '+r.limites.h1+' h', S.pct48, P.pct48], ['% dentro de '+r.limites.h2+' h', S.pct24, P.pct24], [],
+    ['Mezcla de resultados','Cantidad'], ['Aprobada 100%', A.resoluciones.aprobada], ['Aprobada con propuesta', A.resoluciones.propuesta], ['Devuelta a comercial', A.resoluciones.devuelta], ['Rechazada', A.resoluciones.rechazada]
+  ], [38,24,24]);
+  const cab = ['Resueltas','Prom. h','Mediana h','P90 h','% ≤'+r.limites.h1+' h','% ≤'+r.limites.h2+' h','Máx. h'];
+  const fl = function(titulo, grupos){ return [[titulo].concat(cab)].concat(grupos.map(function(g){ return [g.clave, g.n, g.prom, g.mediana, g.p90, g.pct48, g.pct24, g.max]; })); };
+  add('Segmento y categoría', fl('Segmento · Categoría', A.porSegCat), [34,11,9,10,8,10,10,8]);
+  add('Iteración', fl('Iteración', A.porIteracion), [18,11,9,10,8,10,10,8]);
+  add('Resolución', fl('Resolución', A.porResolucion), [18,11,9,10,8,10,10,8]);
+  add('Analista', fl('Analista (columna Analista_Riesgo)', A.porAnalista), [30,11,9,10,8,10,10,8]);
+  add('Mensual', fl('Mes (fecha de respuesta)', A.porMes), [16,11,9,10,8,10,10,8]);
+  add('Notas', [['Definiciones'], ['Resueltas: aprobadas, aprobadas con propuesta, devueltas y rechazadas con fecha de respuesta en el período.'],
+    ['Tiempo: columna Horas_Habiles de la SÁBANA_MAESTRA (horas hábiles, sin fines de semana ni feriados).'], ['Dentro de '+r.limites.h1+' h: tiempo ≤ '+r.limites.h1+' horas hábiles.'],
+    ['Solo cifras agregadas: no contiene RUT ni identificadores de operación.']].concat((r.avisos||[]).map(function(a){ return ['Aviso: '+a]; })), [110]);
+  XLSX.writeFile(wb, 'SLA_Resueltas_' + r.periodo.desde + '_a_' + r.periodo.hasta + '.xlsx');
+}
+
 // Las horas corren: se recalculan cada minuto mientras la pestaña está abierta
 setInterval(function(){ const p = document.getElementById('page-sla'); if(p && p.classList.contains('active') && window._slaTubo) renderSLATubo(); }, 60000);
 
