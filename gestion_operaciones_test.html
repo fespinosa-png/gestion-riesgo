@@ -316,6 +316,7 @@ tr:last-child td{border-bottom:none;}
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end;">
         <button class="btn-secondary" onclick="abrirVerificadorUrgencias()" style="font-size:12px;padding:6px 12px;">🚨 Verificar urgencias</button>
         <button class="btn-secondary" onclick="abrirCargaRapida()" style="font-size:12px;padding:6px 12px;">⚡ Carga rápida</button>
+        <button class="btn-secondary" onclick="abrirListaIvan()" title="Pega una lista de ID y RUT: quedan en el reparto de hoy con la marca de IA (Iván 100%)" style="font-size:12px;padding:6px 12px;">🤖 Cargar lista Iván 100%</button>
         <span class="hint" style="margin:0;">Ingresa RUT, ID o CPF de cada operación. El sistema asigna automáticamente; puedes cambiar la asignación.</span>
       </div>
     </div>
@@ -502,7 +503,7 @@ tr:last-child td{border-bottom:none;}
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
       <div>
         <div class="panel-title" style="margin:0;">⏱ SLA — Pendientes y resueltas</div>
-        <div style="font-size:12px;color:var(--gray-text);margin-top:4px;max-width:780px;"><b>Pendientes:</b> todas las de la sábana, hayan pasado o no por Iván IA, con horas en vivo (incluye RUT). <b>Resueltas:</b> SLA oficial de las operaciones ya respondidas, solo cifras agregadas. Visible solo para el Jefe de Riesgo.</div>
+        <div style="font-size:12px;color:var(--gray-text);margin-top:4px;max-width:780px;"><b>Pendientes:</b> todas las de la sábana, hayan pasado o no por Iván IA, con horas en vivo (incluye RUT). <b>Resueltas:</b> SLA oficial de las operaciones ya respondidas, solo cifras agregadas. Visible solo para el Jefe de Riesgo.<br><b>Alcance:</b> el SLA de la sábana mide solo <b>MHE (Primera Vivienda y Subsidio)</b>, con una meta de cumplimiento del 95% dentro de 48 h hábiles. Pie Hipotecario y Leasing no se miden desde la sábana: se asigna el 100% de lo ingresado el día anterior.</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         <span id="sla-estado" style="font-size:11px;color:var(--gray-text);"></span>
@@ -1421,31 +1422,11 @@ function initFirebaseAuth(){
         const sel = document.getElementById('user-select');
         if(sel) sel.value = match;
       }
-      _fbPostLogin(user);
     } else {
       _fbUser = null;
       showAuthOverlay();
     }
   });
-}
-
-// Al abrir la página, el equipo se lee ANTES de que Firebase confirme la sesión (esa lectura sale sin token).
-// Con la lectura pública cerrada fallaría y se usaría el equipo por defecto: por eso se recarga apenas hay sesión.
-async function _fbPostLogin(user){
-  try{
-    await loadTeamFromGS();
-    renderEquipo(); initUserSelect(); updateCapLabels();
-  }catch(e){ console.log('No se pudo recargar el equipo tras iniciar sesión:', e); }
-  try{
-    if(!currentUser){
-      const match = matchGoogleEmailToTeam(user.email);
-      if(match){
-        setCurrentUser(match);
-        const sel = document.getElementById('user-select');
-        if(sel) sel.value = match;
-      }
-    }
-  }catch(e){}
 }
 
 function showAuthOverlay(){
@@ -1889,6 +1870,10 @@ function calcSLACell(op){
 var SLA_VENCIDA_H = 48, SLA_URGENTE_H = 36;
 var SLA_COL = {vencida:'#C0392B', urgente:'#E67E22', plazo:'#27AE60'};
 var SLA_ETQ = {vencida:'Vencida (≥48 h)', urgente:'Urgente (36–48 h)', plazo:'En plazo (<36 h)'};
+// Meta de cumplimiento del SLA de MHE (% de operaciones dentro de 48 h hábiles). Pie Hipotecario y Leasing no se miden desde la sábana (se asigna el 100% de lo ingresado el día anterior).
+var SLA_META = 95;
+function slaColMeta(p){ return p >= SLA_META ? '#27AE60' : (p >= SLA_META - 10 ? '#BA7517' : '#C0392B'); }
+function slaMetaSub(p){ return '<div style="font-size:10px;color:var(--gray-text);margin-top:2px;">meta '+SLA_META+'% · '+(p >= SLA_META ? 'cumple la meta' : 'faltan '+(Math.round((SLA_META - p) * 10) / 10)+' pp')+'</div>'; }
 
 function slaTuboEstado(h){ return h >= SLA_VENCIDA_H ? 'vencida' : (h >= SLA_URGENTE_H ? 'urgente' : 'plazo'); }
 function slaTuboHoras(op, ahoraMs){
@@ -1963,7 +1948,10 @@ function slaTuboHTML(calc, ahoraMs){
   };
   let h = feriadosAvisoHTML(ahoraMs) + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">'
     + card(k.total, 'Pendientes') + card(k.vencidas, 'Vencidas (≥48 h)', SLA_COL.vencida) + card(k.urgentes, 'Urgentes (36–48 h)', SLA_COL.urgente)
-    + card(k.plazo, 'En plazo (<36 h)', SLA_COL.plazo) + card(k.prom.toFixed(1), 'Promedio h hábiles') + '</div>';
+    + card(k.plazo, 'En plazo (<36 h)', SLA_COL.plazo)
+    + card((k.total ? Math.round((k.total - k.vencidas) / k.total * 1000) / 10 : 0).toFixed(1)+'%', 'Dentro de plazo MHE (<48 h) · meta '+SLA_META+'%'+(k.total ? slaMetaSub((k.total - k.vencidas) / k.total * 100) : ''),
+           k.total ? slaColMeta((k.total - k.vencidas) / k.total * 100) : null)
+    + card(k.prom.toFixed(1), 'Promedio h hábiles') + '</div>';
   // Barra de estados
   if(k.total){
     const seg = function(n, col){ return n ? '<div title="'+n+'" style="width:'+(n/k.total*100)+'%;background:'+col+';"></div>' : ''; };
@@ -2062,7 +2050,7 @@ function exportSLATuboExcel(){
   ws['!cols'] = [{wch:14},{wch:14},{wch:18},{wch:16},{wch:22},{wch:22},{wch:9},{wch:20},{wch:14},{wch:18},{wch:24},{wch:12},{wch:20},{wch:12}];
   XLSX.utils.book_append_sheet(wb, ws, 'Tubo SLA');
   const k = calc.kpi, res = [['TUBO DE PENDIENTES — SLA'],['Calculado:', new Date(ahora).toLocaleString('es-CL')],[],
-    ['Pendientes', k.total],['Vencidas (≥48 h hábiles)', k.vencidas],['Urgentes (36–48 h)', k.urgentes],['En plazo (<36 h)', k.plazo],['Promedio horas hábiles', Math.round(k.prom*10)/10],[],
+    ['Pendientes', k.total],['Vencidas (≥48 h hábiles)', k.vencidas],['Urgentes (36–48 h)', k.urgentes],['En plazo (<36 h)', k.plazo],['Dentro de plazo MHE (<48 h), % (meta '+SLA_META+'%)', k.total ? Math.round((k.total - k.vencidas) / k.total * 1000) / 10 : 0],['Promedio horas hábiles', Math.round(k.prom*10)/10],[],
     ['POR SEGMENTO Y CATEGORÍA','Pendientes','Vencidas','Urgentes','Prom. h']];
   calc.porSegCat.forEach(function(g){ res.push([g.clave, g.n, g.venc, g.urg, Math.round(g.prom*10)/10]); });
   res.push([], ['POR ANALISTA ACTUAL','Pendientes','Vencidas','Urgentes','Prom. h']);
@@ -2139,7 +2127,7 @@ function slaResHTML(r){
   let h = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">'
     + card(S.total, 'Resueltas', slaDeltaHTML(S.total, nm(P.total), nm(P.total), '', false, true))
     + card(S.prom.toFixed(1), 'SLA promedio (h hábiles)', slaDeltaHTML(S.prom, P.prom, P.n, ' h', true))
-    + card(S.pct48.toFixed(1)+'%', 'Dentro de '+r.limites.h1+' h', slaDeltaHTML(S.pct48, P.pct48, P.n, ' pp', false), slaColPct(S.pct48))
+    + card(S.pct48.toFixed(1)+'%', 'Cumplimiento SLA MHE (≤ '+r.limites.h1+' h) · meta '+SLA_META+'%', slaMetaSub(S.pct48) + slaDeltaHTML(S.pct48, P.pct48, P.n, ' pp', false), slaColMeta(S.pct48))
     + card(S.pct24.toFixed(1)+'%', 'Dentro de '+r.limites.h2+' h', slaDeltaHTML(S.pct24, P.pct24, P.n, ' pp', false))
     + card(S.mediana.toFixed(1), 'Mediana (h)', slaDeltaHTML(S.mediana, P.mediana, P.n, ' h', true))
     + card(Number(S.p90).toFixed(1), 'P90 (h): el 90% se resolvió en menos', slaDeltaHTML(S.p90, P.p90, P.n, ' h', true))
@@ -2226,7 +2214,7 @@ function exportSLAResExcel(){
     ['SLA DE OPERACIONES RESUELTAS — SÁBANA_MAESTRA'], ['Período (por fecha de respuesta):', slaFmtRango(r.periodo)], ['Período anterior:', slaFmtRango(r.anterior.periodo)], ['Consultado:', new Date(d.cargadoEn).toLocaleString('es-CL')], [],
     ['Indicador','Período','Anterior'],
     ['Resueltas', S.total, P.total], ['Con horas hábiles', S.n, P.n], ['SLA promedio (h hábiles)', S.prom, P.prom], ['Mediana (h)', S.mediana, P.mediana], ['P90 (h)', S.p90, P.p90],
-    ['% dentro de '+r.limites.h1+' h', S.pct48, P.pct48], ['% dentro de '+r.limites.h2+' h', S.pct24, P.pct24], [],
+    ['Cumplimiento SLA MHE: % dentro de '+r.limites.h1+' h (meta '+SLA_META+'%)', S.pct48, P.pct48], ['% dentro de '+r.limites.h2+' h', S.pct24, P.pct24], [],
     ['Mezcla de resultados','Cantidad'], ['Aprobada 100%', A.resoluciones.aprobada], ['Aprobada con propuesta', A.resoluciones.propuesta], ['Devuelta a comercial', A.resoluciones.devuelta], ['Rechazada', A.resoluciones.rechazada]
   ], [38,24,24]);
   const cab = ['Resueltas','Prom. h','Mediana h','P90 h','% ≤'+r.limites.h1+' h','% ≤'+r.limites.h2+' h','Máx. h'];
@@ -2241,6 +2229,194 @@ function exportSLAResExcel(){
     ['Solo cifras agregadas: no contiene RUT ni identificadores de operación.']].concat((r.avisos||[]).map(function(a){ return ['Aviso: '+a]; })), [110]);
   XLSX.writeFile(wb, 'SLA_Resueltas_' + r.periodo.desde + '_a_' + r.periodo.hasta + '.xlsx');
 }
+
+// ─── CARGAR LISTA "IVÁN 100%" ───────────────────────────────────────────────────────────────────
+// Para operaciones que el equipo sabe que pasaron por Iván al 100% (p. ej. un reporte de Iván) y que la sábana no marca así.
+// Se pegan como ID + RUT y quedan en el reparto de hoy con la marca 🤖 IA · APROBADO_100 (igual que las que vienen de la sábana).
+// Se guarda de dónde viene la marca (_ia_fuente = 'lista') para distinguirlas después de las validadas por la sábana.
+function ivanRutFormato(tok){          // "22.345.094-6" | "223450946" | "22345094-6" → "22345094-6" (formato de la sábana) o null
+  const m = String(tok || '').trim().toUpperCase().match(/^(\d{1,2})\.?(\d{3})\.?(\d{3})-?([\dK])$/);
+  return m ? m[1] + m[2] + m[3] + '-' + m[4] : null;
+}
+function ivanProductoDeTexto(tok){
+  const n = _crNorm(tok).replace(/\s+/g, '');
+  if(/^sub/.test(n)) return 'subsidio';
+  if(/^(pv|primera)/.test(n)) return 'pv';
+  return null;
+}
+// Texto pegado → filas. Cada fila: {linea, id, rut, producto, estado:'lista'|'error'|'duplicada_lista', detalle}
+function ivanListaParsear(texto){
+  const items = [], vistosRut = {}, vistosId = {};
+  String(texto || '').split(/\r?\n/).forEach(function(linea, i){
+    const t = linea.trim();
+    if(!t || !/\d/.test(t)) return;                       // vacías y encabezados (sin números) se ignoran
+    let rut = null, id = '', prod = null, nRut = 0;
+    t.split(/[\t,;\s]+/).filter(Boolean).forEach(function(tk){
+      const r = ivanRutFormato(tk);
+      if(r){ nRut++; rut = r; return; }
+      if(/^\d{3,7}$/.test(tk)){ id = tk; return; }
+      const p = ivanProductoDeTexto(tk); if(p) prod = p;
+    });
+    const it = {linea:i + 1, id:id, rut:rut || '', producto:prod, estado:'lista', detalle:''};
+    if(nRut === 0){ it.estado = 'error'; it.detalle = 'No encuentro un RUT válido en la línea'; }
+    else if(nRut > 1){ it.estado = 'error'; it.detalle = 'Hay más de un RUT en la línea'; }
+    else if(crRutValido(rut) !== true){ it.estado = 'error'; it.detalle = 'El dígito verificador no corresponde'; }
+    else if(vistosRut[rut] || (id && vistosId[id])){ it.estado = 'duplicada_lista'; it.detalle = 'Repetida en la lista'; }
+    else { vistosRut[rut] = true; if(id) vistosId[id] = true; }
+    items.push(it);
+  });
+  return items;
+}
+// Marca las que ya están en el reparto de hoy o ya fueron asignadas hoy (no se vuelven a cargar)
+function ivanListaClasificar(items, dayOps, seguimientoOps){
+  const norm = function(s){ return String(s || '').replace(/[.\-\s]/g, '').toUpperCase(); };
+  const idx = function(ops){ const m = {}; (ops || []).forEach(function(o){ if(o.identificador) m[norm(o.identificador)] = o; if(o._id_operacion) m['#' + o._id_operacion] = o; }); return m; };
+  const enDia = idx(dayOps), enSeg = idx(seguimientoOps);
+  items.forEach(function(it){
+    if(it.estado !== 'lista') return;
+    const s = enSeg[norm(it.rut)] || (it.id && enSeg['#' + it.id]);
+    const d = enDia[norm(it.rut)] || (it.id && enDia['#' + it.id]);
+    if(s){ it.estado = 'asignada_hoy'; it.detalle = 'Ya asignada hoy a ' + (s.analista || 'sin analista') + ' (' + (s.estado || 'PENDIENTE') + ')'; }
+    else if(d){ it.estado = 'en_reparto'; it.detalle = 'Ya está en el reparto de hoy'; }
+  });
+  return items;
+}
+// Aplica lo que respondió la sábana (si se consultó)
+function ivanListaAplicarInfo(items, resultados){
+  const SEG = {'Subsidio':'subsidio', 'Primera Vivienda':'pv'};
+  items.forEach(function(it){
+    if(it.estado !== 'lista') return;
+    const info = resultados && resultados[it.rut];
+    it.info = info || null;
+    if(!info || !info.encontrado) return;
+    it.productoSabana = SEG[info.segmento] || null;
+    it.iaSabana = (info.resolucion_ia === IVAN_LISTA_RES);
+    if(info.estado === 'resuelta'){ it.estado = 'resuelta_sabana'; it.detalle = 'La sábana ya la muestra resuelta'; }
+  });
+  return items;
+}
+function ivanListaResolverProducto(items, porDefecto){
+  items.forEach(function(it){ it.productoFinal = it.producto || it.productoSabana || porDefecto; });
+  return items;
+}
+var IVAN_LISTA_RES = 'APROBADO_100', IVAN_LISTA_AGENTE = 'Enviar a riesgo';
+function ivanListaOp(it, ahoraIso){
+  const p = PRODUCTS.find(function(x){ return x.key === it.productoFinal; });
+  let analista = ''; try{ analista = autoAssign(it.productoFinal) || ''; }catch(e){}
+  return {
+    uid: uid(), productKey: it.productoFinal, productName: p ? p.name : it.productoFinal,
+    identificador: it.rut, analista: analista, estado: 'PENDIENTE', tier: 'normal', fecha_riesgo: '',
+    obs: 'ID Op: ' + (it.id || '—') + ' | Lista Iván 100%', obs_seguimiento: '', asignado_en: ahoraIso, completado_en: null,
+    _id_operacion: it.id || '', _categoria_sla: '',
+    _derivar_ivan: true, _resolucion_ia: IVAN_LISTA_RES, _resolucion_agente: IVAN_LISTA_AGENTE,
+    _ia_fuente: 'lista', _needs_review: true
+  };
+}
+async function ivanListaConsultar(items){
+  const ruts = Array.from(new Set(items.filter(function(i){ return i.estado === 'lista'; }).map(function(i){ return i.rut; })));
+  const out = {};
+  for(let k = 0; k < ruts.length; k += 300){
+    const r = await gsCall('getSLAPorIdentificadores', {ids: ruts.slice(k, k + 300)});
+    if(r.error) throw new Error(r.error);
+    Object.assign(out, r.resultados);
+  }
+  return out;
+}
+function ivanListaPreviewHTML(items, aviso){
+  const E = _urgEsc, cnt = {};
+  items.forEach(function(i){ cnt[i.estado] = (cnt[i.estado] || 0) + 1; });
+  const sinIA = items.filter(function(i){ return i.estado === 'lista' && i.iaSabana === false; }).length;
+  const noEnc = items.filter(function(i){ return i.estado === 'lista' && i.info && !i.info.encontrado; }).length;
+  const partes = [(cnt.lista || 0) + ' listas para cargar'];
+  if(cnt.en_reparto) partes.push(cnt.en_reparto + ' ya en el reparto');
+  if(cnt.asignada_hoy) partes.push(cnt.asignada_hoy + ' ya asignadas hoy');
+  if(cnt.resuelta_sabana) partes.push(cnt.resuelta_sabana + ' ya resueltas en la sábana');
+  if(cnt.duplicada_lista) partes.push(cnt.duplicada_lista + ' repetidas');
+  if(cnt.error) partes.push(cnt.error + ' con error');
+  let h = '<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:6px;">' + partes.join(' · ') + '</div>';
+  if(aviso) h += '<div style="font-size:12px;color:#BA7517;margin-bottom:6px;">⚠ ' + E(aviso) + '</div>';
+  if(sinIA) h += '<div style="font-size:12px;color:#BA7517;margin-bottom:6px;">⚠ ' + sinIA + ' de las listas <b>no muestran paso por IA en la sábana</b> (puede ser un desfase). Se cargarán marcadas como Iván 100% porque así lo indicas, y quedará registrado que la marca viene de la lista.</div>';
+  if(noEnc) h += '<div style="font-size:12px;color:var(--gray-text);margin-bottom:6px;">ℹ ' + noEnc + ' todavía no aparecen en la sábana: se cargan con el producto por defecto.</div>';
+  const colEst = {lista:'#27AE60', en_reparto:'#BA7517', asignada_hoy:'#BA7517', resuelta_sabana:'#C0392B', duplicada_lista:'#8A96A3', error:'#C0392B'};
+  const etq = {lista:'✔ Lista', en_reparto:'Ya en el reparto', asignada_hoy:'Ya asignada hoy', resuelta_sabana:'Ya resuelta', duplicada_lista:'Repetida', error:'Error'};
+  h += '<div style="overflow-x:auto;max-height:46vh;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="background:var(--navy);color:#fff;position:sticky;top:0;">'
+    + ['#','ID','RUT','Producto','Estado'].map(function(t){ return '<th style="padding:5px 8px;text-align:left;">' + t + '</th>'; }).join('') + '</tr></thead><tbody>';
+  items.slice(0, 300).forEach(function(it){
+    const p = PRODUCTS.find(function(x){ return x.key === it.productoFinal; });
+    let det = it.detalle;
+    if(it.estado === 'lista' && it.info && it.info.encontrado && typeof slaConsultaResumen === 'function') det = slaConsultaResumen(it.info).texto;
+    h += '<tr style="border-bottom:1px solid var(--gray-line);"><td style="padding:4px 8px;">' + it.linea + '</td><td style="padding:4px 8px;">' + E(it.id || '—') + '</td><td style="padding:4px 8px;white-space:nowrap;">' + E(it.rut || '—') + '</td>'
+      + '<td style="padding:4px 8px;">' + E(it.estado === 'lista' ? (p ? p.name : it.productoFinal) : '') + '</td>'
+      + '<td style="padding:4px 8px;color:' + colEst[it.estado] + ';font-weight:700;">' + etq[it.estado] + (det ? ' <span style="font-weight:400;color:var(--gray-text);">· ' + E(det) + '</span>' : '') + '</td></tr>';
+  });
+  return h + '</tbody></table></div>';
+}
+
+function cerrarListaIvan(){ const o = document.getElementById('ivl-overlay'); if(o) o.remove(); window._ivanLista = null; }
+function ivanListaInvalidar(){
+  window._ivanLista = null;
+  const b = document.getElementById('ivl-btn-agregar'); if(b){ b.disabled = true; b.style.opacity = '.45'; }
+  const r = document.getElementById('ivl-res'); if(r) r.innerHTML = '';
+}
+function abrirListaIvan(){
+  cerrarListaIvan();
+  const hayConsulta = (typeof slaAplicarConsultaAOp === 'function');
+  const ov = document.createElement('div');
+  ov.id = 'ivl-overlay';
+  ov.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,16,41,.55);z-index:9500;display:flex;align-items:center;justify-content:center;padding:16px;';
+  ov.innerHTML = '<div style="background:#fff;border-radius:14px;max-width:860px;width:100%;max-height:92vh;overflow:auto;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.35);">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px;"><div style="font-size:17px;font-weight:800;color:var(--navy);">🤖 Cargar lista Iván 100%</div>'
+    + '<button onclick="cerrarListaIvan()" style="border:none;background:none;font-size:18px;cursor:pointer;color:var(--gray-text);">✕</button></div>'
+    + '<div style="font-size:12px;color:var(--gray-text);margin-bottom:10px;">Pega una operación por línea: <b>ID de operación y RUT</b>, separados por tab, coma o espacio (como sale de Excel). Opcional: una tercera columna con el producto (Subsidio o Primera Vivienda). Quedan en el reparto de hoy con la marca <b>🤖 IA · APROBADO_100</b>.</div>'
+    + '<textarea id="ivl-txt" rows="9" placeholder="92597&#9;22345094-6" oninput="ivanListaInvalidar()" style="width:100%;box-sizing:border-box;font-family:monospace;font-size:12px;padding:8px;border:1px solid var(--gray-line);border-radius:8px;"></textarea>'
+    + '<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:10px 0;">'
+    + '<label style="font-size:12px;">Producto si no se informa: <select id="ivl-prod" onchange="ivanListaInvalidar()" style="padding:5px 8px;border:1px solid var(--gray-line);border-radius:8px;"><option value="subsidio">Subsidio</option><option value="pv">Primera Vivienda</option></select></label>'
+    + (hayConsulta ? '<label style="font-size:12px;"><input type="checkbox" id="ivl-consulta" checked onchange="ivanListaInvalidar()"> Consultar la sábana (producto, categoría y SLA)</label>' : '')
+    + '</div>'
+    + '<div style="display:flex;gap:8px;margin-bottom:12px;"><button id="ivl-btn-validar" class="btn-secondary" onclick="ivanListaValidar()" style="padding:8px 16px;">Validar</button>'
+    + '<button id="ivl-btn-agregar" onclick="ivanListaAgregar()" disabled style="padding:8px 16px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:700;cursor:pointer;opacity:.45;">Agregar al reparto</button></div>'
+    + '<div id="ivl-res"></div></div>';
+  document.body.appendChild(ov);
+}
+async function ivanListaValidar(){
+  const txt = document.getElementById('ivl-txt').value, def = document.getElementById('ivl-prod').value;
+  const chk = document.getElementById('ivl-consulta'), consultar = !!(chk && chk.checked);
+  const res = document.getElementById('ivl-res'), bV = document.getElementById('ivl-btn-validar'), bA = document.getElementById('ivl-btn-agregar');
+  const items = ivanListaParsear(txt);
+  if(!items.length){ res.innerHTML = '<div style="font-size:12px;color:#C0392B;">No encontré operaciones en el texto. Pega líneas con el ID y el RUT.</div>'; return; }
+  ivanListaClasificar(items, dayOps, seguimientoOps);
+  let aviso = '';
+  if(consultar){
+    bV.disabled = true; bV.textContent = '⏳ Consultando la sábana…';
+    try{ ivanListaAplicarInfo(items, await ivanListaConsultar(items)); }
+    catch(e){ aviso = 'No se pudo consultar la sábana (' + e.message + '). Se usará el producto por defecto y no se calculará el SLA.'; }
+    finally{ bV.disabled = false; bV.textContent = 'Validar'; }
+  }
+  ivanListaResolverProducto(items, def);
+  window._ivanLista = {items:items, consultado: consultar && !aviso};
+  res.innerHTML = ivanListaPreviewHTML(items, aviso);
+  const hay = items.some(function(i){ return i.estado === 'lista'; });
+  bA.disabled = !hay; bA.style.opacity = hay ? '1' : '.45';
+}
+function ivanListaAgregar(){
+  const L = window._ivanLista;
+  const listos = L ? L.items.filter(function(i){ return i.estado === 'lista'; }) : [];
+  if(!listos.length){ alert('No hay operaciones listas para cargar. Presiona Validar primero.'); return; }
+  const ahoraIso = new Date().toISOString(), ahora = Date.now();
+  listos.forEach(function(it){
+    const op = ivanListaOp(it, ahoraIso);
+    if(L.consultado && it.info && typeof slaAplicarConsultaAOp === 'function'){
+      slaAplicarConsultaAOp(op, it.info, ahora);
+      if(it.info.encontrado) op._ia_sabana = !!it.iaSabana;
+    }
+    dayOps.push(op);
+  });
+  const resto = L.items.length - listos.length;
+  saveDraft(); buildOpsEntry(); updateDraftBadge();
+  cerrarListaIvan();
+  alert('Se agregaron ' + listos.length + ' operaciones al reparto de hoy con la marca 🤖 IA · APROBADO_100.' + (resto ? '\n' + resto + ' no se cargaron (repetidas, ya asignadas, resueltas o con error).' : '') + '\n\nRevisa la asignación y confirma el reparto.');
+}
+// ─── FIN CARGAR LISTA IVÁN ───
 
 // Las horas corren: se recalculan cada minuto mientras la pestaña está abierta
 setInterval(function(){ const p = document.getElementById('page-sla'); if(p && p.classList.contains('active') && window._slaTubo) renderSLATubo(); }, 60000);
@@ -3025,7 +3201,8 @@ function categoriaSeccionHTML(pc, filtroCat){
 function iaBadgeHTML(op, compacto){
   if(!op._derivar_ivan) return '';
   const res = op._resolucion_ia || '';
-  const tip = 'Evaluada por IA' + (res ? ' · Resolución IA: '+res : '') + (op._resolucion_agente ? ' · Agente: '+op._resolucion_agente : '');
+  const tip = 'Evaluada por IA' + (res ? ' · Resolución IA: '+res : '') + (op._resolucion_agente ? ' · Agente: '+op._resolucion_agente : '')
+    + (op._ia_fuente === 'lista' ? ' · Marcada desde una lista cargada manualmente' + (op._ia_sabana === false ? ' (la sábana aún no muestra paso por IA)' : '') : '');
   const txt = (!compacto && res) ? '🤖 IA · '+res : '🤖 Iván IA';
   return '<span title="'+_urgEsc(tip)+'" style="display:inline-block;background:#F3E5F5;color:#8E44AD;font-size:10px;font-weight:700;padding:3px 8px;border-radius:10px;border:1px solid #CE93D8;white-space:nowrap;">'+_urgEsc(txt)+'</span>';
 }
@@ -5141,6 +5318,45 @@ function setDashPeriod(period){
   loadDashboard();
 }
 
+// ─── INGRESADAS POR EL ÁREA COMERCIAL (serie del gráfico "Tubo vs Completadas") ───────────────────────────
+// MHE (Primera Vivienda y Subsidio): todos los envíos del día según la sábana, incluidos los reingresos (acción getIngresosMHE del Apps Script: solo cifras
+// por día). Si el día no se grafica (fin de semana), suma al primer día graficado que sigue (a lo más 2 días después).
+// Pie Hipotecario y Leasing: se asigna el 100% de lo ingresado el día anterior, así que lo ASIGNADO ese día es lo ingresado el día anterior.
+// No incluye Brasil. No se filtra por analista ni por categoría: es lo que ingresó el área comercial.
+function dashIngresosCalcular(weekDays, ops, mheDias){
+  const out = weekDays.map(function(){ return 0; }), idx = {};
+  weekDays.forEach(function(d, i){ idx[d] = i; });
+  const dif = function(a, b){ return Math.round((new Date(b + 'T12:00:00Z') - new Date(a + 'T12:00:00Z')) / 86400000); };
+  Object.keys(mheDias || {}).forEach(function(f){
+    const n = Number(mheDias[f]) || 0;
+    if(!n) return;
+    if(idx[f] !== undefined){ out[idx[f]] += n; return; }
+    const dow = new Date(f + 'T12:00:00Z').getUTCDay();
+    if(dow !== 0 && dow !== 6) return;                                       // fuera del período
+    for(let i = 0; i < weekDays.length; i++){
+      if(weekDays[i] > f){ if(dif(f, weekDays[i]) <= 2) out[i] += n; break; }
+    }
+  });
+  (ops || []).forEach(function(op){
+    if(op.productKey !== 'pie' && op.productKey !== 'leasing') return;
+    if(idx[op._date] !== undefined) out[idx[op._date]]++;
+  });
+  return out;
+}
+async function dashIngresosAgregar(chart, weekDays, ops){
+  const nota = document.getElementById('dash-ingresos-nota');
+  if(!chart || !weekDays || !weekDays.length) return;
+  try{
+    const r = await gsCall('getIngresosMHE', {desde: slaSumaDias(weekDays[0], -2), hasta: weekDays[weekDays.length - 1]});
+    if(!r || r.error) throw new Error((r && r.error) || 'sin respuesta');
+    const data = dashIngresosCalcular(weekDays, ops, r.dias);
+    chart.data.datasets.push({label:'Ingresadas (área comercial)', data:data, borderColor:'#B388FF', backgroundColor:'transparent', tension:0.3, fill:false, pointBackgroundColor:'#B388FF', pointRadius:4, borderWidth:2});
+    chart.update();
+    if(nota) nota.textContent = 'Ingresadas = MHE: todos los envíos del día según la sábana (incluye reingresos; el fin de semana suma al lunes) + Pie y Leasing: lo asignado ese día (ingresado el día anterior). No incluye Brasil ni se filtra por analista.';
+  }catch(e){
+    if(nota) nota.textContent = 'Ingresadas por el área comercial no disponible: ' + e.message + (/desconocid/i.test(e.message) ? ' (falta agregar la acción getIngresosMHE en Código.gs y crear una nueva versión de la implementación)' : '');
+  }
+}
 async function loadDashboard(){
   const body = document.getElementById('dashboard-body');
   const weekLabel = document.getElementById('dashboard-week-label');
@@ -5273,6 +5489,7 @@ async function loadDashboard(){
       }
     }catch(e){ console.warn('No se pudieron cargar resultados en dashboard:', e); }
 
+    const opsSinFiltro = allOps.slice();      // para «Ingresadas»: no depende del filtro de analista ni de categoría
     // Aplicar filtro de analista si está seleccionado
     const filtroAnalista = document.getElementById('db-filter-analista')?.value || '';
     if(filtroAnalista){
@@ -5776,7 +5993,7 @@ async function loadDashboard(){
       + '</div>'
       + '<div style="margin-top:12px;background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-bar-diario" height="80"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:4px;">EVOLUCIÓN DIARIA</div></div>'
       + '<div style="margin-top:12px;background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-bar-analistas" height="80"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:4px;">CUMPLIMIENTO POR ANALISTA</div></div>'
-      + '<div style="margin-top:12px;background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-donut-plan" height="80"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:4px;">EVOLUCIÓN DEL TUBO vs COMPLETADAS</div></div>'
+      + '<div style="margin-top:12px;background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-donut-plan" height="80"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:4px;">EVOLUCIÓN DEL TUBO vs COMPLETADAS vs INGRESADAS</div><div id="dash-ingresos-nota" style="text-align:center;font-size:10px;color:#AABBD0;margin-top:2px;"></div></div>'
       + '</div>'
       // KPIs
       + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">'
@@ -5907,7 +6124,7 @@ async function loadDashboard(){
         });
         var ctxPlan=document.getElementById('chart-donut-plan');
         if(ctxPlan){
-          new Chart(ctxPlan,{type:'line',data:{
+          var chartPlanTubo = new Chart(ctxPlan,{type:'line',data:{
             labels:tuboLabels,
             datasets:[
               {label:'Tubo (asignadas)',data:tuboData,borderColor:CYAN,backgroundColor:'rgba(0,204,209,0.15)',tension:0.3,fill:true,pointBackgroundColor:CYAN,pointRadius:4,borderWidth:2},
@@ -5918,6 +6135,7 @@ async function loadDashboard(){
             x:{ticks:{color:'#AABBD0',font:{size:10}},grid:{color:'rgba(255,255,255,0.08)'}},
             y:{beginAtZero:true,ticks:{color:'#AABBD0',font:{size:10}},grid:{color:'rgba(255,255,255,0.08)'}}
           },plugins:{...chartDefaults.plugins,legend:{display:true,position:'top',labels:{color:'#AABBD0',font:{size:10}}}}}});
+          dashIngresosAgregar(chartPlanTubo, weekDays, opsSinFiltro);
         }
 
       }catch(chartErr){ console.warn('Error en gráficos:', chartErr); }
