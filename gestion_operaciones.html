@@ -498,7 +498,7 @@ tr:last-child td{border-bottom:none;}
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
       <div>
         <div class="panel-title" style="margin:0;">⏱ SLA — Pendientes y resueltas</div>
-        <div style="font-size:12px;color:var(--gray-text);margin-top:4px;max-width:780px;"><b>Pendientes:</b> todas las de la sábana, hayan pasado o no por Iván IA, con horas en vivo (incluye RUT). <b>Resueltas:</b> SLA oficial de las operaciones ya respondidas, solo cifras agregadas. Visible solo para el Jefe de Riesgo.</div>
+        <div style="font-size:12px;color:var(--gray-text);margin-top:4px;max-width:780px;"><b>Pendientes:</b> todas las de la sábana, hayan pasado o no por Iván IA, con horas en vivo (incluye RUT). <b>Resueltas:</b> SLA oficial de las operaciones ya respondidas, solo cifras agregadas. Visible solo para el Jefe de Riesgo.<br><b>Alcance:</b> el SLA de la sábana mide solo <b>MHE (Primera Vivienda y Subsidio)</b>, con una meta de cumplimiento del 95% dentro de 48 h hábiles. Pie Hipotecario y Leasing no se miden desde la sábana: se asigna el 100% de lo ingresado el día anterior.</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         <span id="sla-estado" style="font-size:11px;color:var(--gray-text);"></span>
@@ -1812,6 +1812,10 @@ function calcSLACell(op){
 var SLA_VENCIDA_H = 48, SLA_URGENTE_H = 36;
 var SLA_COL = {vencida:'#C0392B', urgente:'#E67E22', plazo:'#27AE60'};
 var SLA_ETQ = {vencida:'Vencida (≥48 h)', urgente:'Urgente (36–48 h)', plazo:'En plazo (<36 h)'};
+// Meta de cumplimiento del SLA de MHE (% de operaciones dentro de 48 h hábiles). Pie Hipotecario y Leasing no se miden desde la sábana (se asigna el 100% de lo ingresado el día anterior).
+var SLA_META = 95;
+function slaColMeta(p){ return p >= SLA_META ? '#27AE60' : (p >= SLA_META - 10 ? '#BA7517' : '#C0392B'); }
+function slaMetaSub(p){ return '<div style="font-size:10px;color:var(--gray-text);margin-top:2px;">meta '+SLA_META+'% · '+(p >= SLA_META ? 'cumple la meta' : 'faltan '+(Math.round((SLA_META - p) * 10) / 10)+' pp')+'</div>'; }
 
 function slaTuboEstado(h){ return h >= SLA_VENCIDA_H ? 'vencida' : (h >= SLA_URGENTE_H ? 'urgente' : 'plazo'); }
 function slaTuboHoras(op, ahoraMs){
@@ -1886,7 +1890,10 @@ function slaTuboHTML(calc, ahoraMs){
   };
   let h = feriadosAvisoHTML(ahoraMs) + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">'
     + card(k.total, 'Pendientes') + card(k.vencidas, 'Vencidas (≥48 h)', SLA_COL.vencida) + card(k.urgentes, 'Urgentes (36–48 h)', SLA_COL.urgente)
-    + card(k.plazo, 'En plazo (<36 h)', SLA_COL.plazo) + card(k.prom.toFixed(1), 'Promedio h hábiles') + '</div>';
+    + card(k.plazo, 'En plazo (<36 h)', SLA_COL.plazo)
+    + card((k.total ? Math.round((k.total - k.vencidas) / k.total * 1000) / 10 : 0).toFixed(1)+'%', 'Dentro de plazo MHE (<48 h) · meta '+SLA_META+'%'+(k.total ? slaMetaSub((k.total - k.vencidas) / k.total * 100) : ''),
+           k.total ? slaColMeta((k.total - k.vencidas) / k.total * 100) : null)
+    + card(k.prom.toFixed(1), 'Promedio h hábiles') + '</div>';
   // Barra de estados
   if(k.total){
     const seg = function(n, col){ return n ? '<div title="'+n+'" style="width:'+(n/k.total*100)+'%;background:'+col+';"></div>' : ''; };
@@ -1985,7 +1992,7 @@ function exportSLATuboExcel(){
   ws['!cols'] = [{wch:14},{wch:14},{wch:18},{wch:16},{wch:22},{wch:22},{wch:9},{wch:20},{wch:14},{wch:18},{wch:24},{wch:12},{wch:20},{wch:12}];
   XLSX.utils.book_append_sheet(wb, ws, 'Tubo SLA');
   const k = calc.kpi, res = [['TUBO DE PENDIENTES — SLA'],['Calculado:', new Date(ahora).toLocaleString('es-CL')],[],
-    ['Pendientes', k.total],['Vencidas (≥48 h hábiles)', k.vencidas],['Urgentes (36–48 h)', k.urgentes],['En plazo (<36 h)', k.plazo],['Promedio horas hábiles', Math.round(k.prom*10)/10],[],
+    ['Pendientes', k.total],['Vencidas (≥48 h hábiles)', k.vencidas],['Urgentes (36–48 h)', k.urgentes],['En plazo (<36 h)', k.plazo],['Dentro de plazo MHE (<48 h), % (meta '+SLA_META+'%)', k.total ? Math.round((k.total - k.vencidas) / k.total * 1000) / 10 : 0],['Promedio horas hábiles', Math.round(k.prom*10)/10],[],
     ['POR SEGMENTO Y CATEGORÍA','Pendientes','Vencidas','Urgentes','Prom. h']];
   calc.porSegCat.forEach(function(g){ res.push([g.clave, g.n, g.venc, g.urg, Math.round(g.prom*10)/10]); });
   res.push([], ['POR ANALISTA ACTUAL','Pendientes','Vencidas','Urgentes','Prom. h']);
@@ -2062,7 +2069,7 @@ function slaResHTML(r){
   let h = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">'
     + card(S.total, 'Resueltas', slaDeltaHTML(S.total, nm(P.total), nm(P.total), '', false, true))
     + card(S.prom.toFixed(1), 'SLA promedio (h hábiles)', slaDeltaHTML(S.prom, P.prom, P.n, ' h', true))
-    + card(S.pct48.toFixed(1)+'%', 'Dentro de '+r.limites.h1+' h', slaDeltaHTML(S.pct48, P.pct48, P.n, ' pp', false), slaColPct(S.pct48))
+    + card(S.pct48.toFixed(1)+'%', 'Cumplimiento SLA MHE (≤ '+r.limites.h1+' h) · meta '+SLA_META+'%', slaMetaSub(S.pct48) + slaDeltaHTML(S.pct48, P.pct48, P.n, ' pp', false), slaColMeta(S.pct48))
     + card(S.pct24.toFixed(1)+'%', 'Dentro de '+r.limites.h2+' h', slaDeltaHTML(S.pct24, P.pct24, P.n, ' pp', false))
     + card(S.mediana.toFixed(1), 'Mediana (h)', slaDeltaHTML(S.mediana, P.mediana, P.n, ' h', true))
     + card(Number(S.p90).toFixed(1), 'P90 (h): el 90% se resolvió en menos', slaDeltaHTML(S.p90, P.p90, P.n, ' h', true))
@@ -2149,7 +2156,7 @@ function exportSLAResExcel(){
     ['SLA DE OPERACIONES RESUELTAS — SÁBANA_MAESTRA'], ['Período (por fecha de respuesta):', slaFmtRango(r.periodo)], ['Período anterior:', slaFmtRango(r.anterior.periodo)], ['Consultado:', new Date(d.cargadoEn).toLocaleString('es-CL')], [],
     ['Indicador','Período','Anterior'],
     ['Resueltas', S.total, P.total], ['Con horas hábiles', S.n, P.n], ['SLA promedio (h hábiles)', S.prom, P.prom], ['Mediana (h)', S.mediana, P.mediana], ['P90 (h)', S.p90, P.p90],
-    ['% dentro de '+r.limites.h1+' h', S.pct48, P.pct48], ['% dentro de '+r.limites.h2+' h', S.pct24, P.pct24], [],
+    ['Cumplimiento SLA MHE: % dentro de '+r.limites.h1+' h (meta '+SLA_META+'%)', S.pct48, P.pct48], ['% dentro de '+r.limites.h2+' h', S.pct24, P.pct24], [],
     ['Mezcla de resultados','Cantidad'], ['Aprobada 100%', A.resoluciones.aprobada], ['Aprobada con propuesta', A.resoluciones.propuesta], ['Devuelta a comercial', A.resoluciones.devuelta], ['Rechazada', A.resoluciones.rechazada]
   ], [38,24,24]);
   const cab = ['Resueltas','Prom. h','Mediana h','P90 h','% ≤'+r.limites.h1+' h','% ≤'+r.limites.h2+' h','Máx. h'];
@@ -5253,6 +5260,45 @@ function setDashPeriod(period){
   loadDashboard();
 }
 
+// ─── INGRESADAS POR EL ÁREA COMERCIAL (serie del gráfico "Tubo vs Completadas") ───────────────────────────
+// MHE (Primera Vivienda y Subsidio): todos los envíos del día según la sábana, incluidos los reingresos (acción getIngresosMHE del Apps Script: solo cifras
+// por día). Si el día no se grafica (fin de semana), suma al primer día graficado que sigue (a lo más 2 días después).
+// Pie Hipotecario y Leasing: se asigna el 100% de lo ingresado el día anterior, así que lo ASIGNADO ese día es lo ingresado el día anterior.
+// No incluye Brasil. No se filtra por analista ni por categoría: es lo que ingresó el área comercial.
+function dashIngresosCalcular(weekDays, ops, mheDias){
+  const out = weekDays.map(function(){ return 0; }), idx = {};
+  weekDays.forEach(function(d, i){ idx[d] = i; });
+  const dif = function(a, b){ return Math.round((new Date(b + 'T12:00:00Z') - new Date(a + 'T12:00:00Z')) / 86400000); };
+  Object.keys(mheDias || {}).forEach(function(f){
+    const n = Number(mheDias[f]) || 0;
+    if(!n) return;
+    if(idx[f] !== undefined){ out[idx[f]] += n; return; }
+    const dow = new Date(f + 'T12:00:00Z').getUTCDay();
+    if(dow !== 0 && dow !== 6) return;                                       // fuera del período
+    for(let i = 0; i < weekDays.length; i++){
+      if(weekDays[i] > f){ if(dif(f, weekDays[i]) <= 2) out[i] += n; break; }
+    }
+  });
+  (ops || []).forEach(function(op){
+    if(op.productKey !== 'pie' && op.productKey !== 'leasing') return;
+    if(idx[op._date] !== undefined) out[idx[op._date]]++;
+  });
+  return out;
+}
+async function dashIngresosAgregar(chart, weekDays, ops){
+  const nota = document.getElementById('dash-ingresos-nota');
+  if(!chart || !weekDays || !weekDays.length) return;
+  try{
+    const r = await gsCall('getIngresosMHE', {desde: slaSumaDias(weekDays[0], -2), hasta: weekDays[weekDays.length - 1]});
+    if(!r || r.error) throw new Error((r && r.error) || 'sin respuesta');
+    const data = dashIngresosCalcular(weekDays, ops, r.dias);
+    chart.data.datasets.push({label:'Ingresadas (área comercial)', data:data, borderColor:'#B388FF', backgroundColor:'transparent', tension:0.3, fill:false, pointBackgroundColor:'#B388FF', pointRadius:4, borderWidth:2});
+    chart.update();
+    if(nota) nota.textContent = 'Ingresadas = MHE: todos los envíos del día según la sábana (incluye reingresos; el fin de semana suma al lunes) + Pie y Leasing: lo asignado ese día (ingresado el día anterior). No incluye Brasil ni se filtra por analista.';
+  }catch(e){
+    if(nota) nota.textContent = 'Ingresadas por el área comercial no disponible: ' + e.message + (/desconocid/i.test(e.message) ? ' (falta agregar la acción getIngresosMHE en Código.gs y crear una nueva versión de la implementación)' : '');
+  }
+}
 async function loadDashboard(){
   const body = document.getElementById('dashboard-body');
   const weekLabel = document.getElementById('dashboard-week-label');
@@ -5385,6 +5431,7 @@ async function loadDashboard(){
       }
     }catch(e){ console.warn('No se pudieron cargar resultados en dashboard:', e); }
 
+    const opsSinFiltro = allOps.slice();      // para «Ingresadas»: no depende del filtro de analista ni de categoría
     // Aplicar filtro de analista si está seleccionado
     const filtroAnalista = document.getElementById('db-filter-analista')?.value || '';
     if(filtroAnalista){
@@ -5888,7 +5935,7 @@ async function loadDashboard(){
       + '</div>'
       + '<div style="margin-top:12px;background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-bar-diario" height="80"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:4px;">EVOLUCIÓN DIARIA</div></div>'
       + '<div style="margin-top:12px;background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-bar-analistas" height="80"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:4px;">CUMPLIMIENTO POR ANALISTA</div></div>'
-      + '<div style="margin-top:12px;background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-donut-plan" height="80"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:4px;">EVOLUCIÓN DEL TUBO vs COMPLETADAS</div></div>'
+      + '<div style="margin-top:12px;background:rgba(255,255,255,0.08);border-radius:10px;padding:12px;"><canvas id="chart-donut-plan" height="80"></canvas><div style="text-align:center;font-size:10px;color:#AABBD0;margin-top:4px;">EVOLUCIÓN DEL TUBO vs COMPLETADAS vs INGRESADAS</div><div id="dash-ingresos-nota" style="text-align:center;font-size:10px;color:#AABBD0;margin-top:2px;"></div></div>'
       + '</div>'
       // KPIs
       + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">'
@@ -6019,7 +6066,7 @@ async function loadDashboard(){
         });
         var ctxPlan=document.getElementById('chart-donut-plan');
         if(ctxPlan){
-          new Chart(ctxPlan,{type:'line',data:{
+          var chartPlanTubo = new Chart(ctxPlan,{type:'line',data:{
             labels:tuboLabels,
             datasets:[
               {label:'Tubo (asignadas)',data:tuboData,borderColor:CYAN,backgroundColor:'rgba(0,204,209,0.15)',tension:0.3,fill:true,pointBackgroundColor:CYAN,pointRadius:4,borderWidth:2},
@@ -6030,6 +6077,7 @@ async function loadDashboard(){
             x:{ticks:{color:'#AABBD0',font:{size:10}},grid:{color:'rgba(255,255,255,0.08)'}},
             y:{beginAtZero:true,ticks:{color:'#AABBD0',font:{size:10}},grid:{color:'rgba(255,255,255,0.08)'}}
           },plugins:{...chartDefaults.plugins,legend:{display:true,position:'top',labels:{color:'#AABBD0',font:{size:10}}}}}});
+          dashIngresosAgregar(chartPlanTubo, weekDays, opsSinFiltro);
         }
 
       }catch(chartErr){ console.warn('Error en gráficos:', chartErr); }
