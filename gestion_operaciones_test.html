@@ -1422,11 +1422,31 @@ function initFirebaseAuth(){
         const sel = document.getElementById('user-select');
         if(sel) sel.value = match;
       }
+      _fbPostLogin(user);
     } else {
       _fbUser = null;
       showAuthOverlay();
     }
   });
+}
+
+// Al abrir la página, el equipo se lee ANTES de que Firebase confirme la sesión (esa lectura sale sin token).
+// Con la lectura pública cerrada fallaría y se usaría el equipo por defecto: por eso se recarga apenas hay sesión.
+async function _fbPostLogin(user){
+  try{
+    await loadTeamFromGS();
+    renderEquipo(); initUserSelect(); updateCapLabels();
+  }catch(e){ console.log('No se pudo recargar el equipo tras iniciar sesión:', e); }
+  try{
+    if(!currentUser){
+      const match = matchGoogleEmailToTeam(user.email);
+      if(match){
+        setCurrentUser(match);
+        const sel = document.getElementById('user-select');
+        if(sel) sel.value = match;
+      }
+    }
+  }catch(e){}
 }
 
 function showAuthOverlay(){
