@@ -318,6 +318,7 @@ tr:last-child td{border-bottom:none;}
         <button class="btn-secondary" onclick="abrirCargaRapida()" style="font-size:12px;padding:6px 12px;">⚡ Carga rápida</button>
         <button class="btn-secondary" onclick="abrirListaIvan()" title="Pega una lista de ID y RUT: quedan en el reparto de hoy con la marca de IA (Iván 100%)" style="font-size:12px;padding:6px 12px;">🤖 Cargar lista Iván 100%</button>
         <button class="btn-secondary" id="btn-sla-rut" onclick="consultarSLAOperaciones()" title="Busca en la sábana los RUT cargados de Primera Vivienda y Subsidio: te dice cuántas horas hábiles llevan y asigna la urgencia" style="font-size:12px;padding:6px 12px;">⏱ Consultar SLA</button>
+        <button class="btn-secondary" id="btn-asig-mhe" onclick="proponerAsignacionMHE()" title="Lee el tubo de la sábana y propone a quién asignar cada operación MHE sin analista: las más antiguas primero, según producto y cupo del día. Solo propone: no guarda nada." style="font-size:12px;padding:6px 12px;">🧮 Proponer asignación MHE</button>
         <span id="sla-rut-estado" style="font-size:11px;color:var(--gray-text);max-width:520px;"></span>
         <span class="hint" style="margin:0;">Ingresa RUT, ID o CPF de cada operación. El sistema asigna automáticamente; puedes cambiar la asignación.</span>
       </div>
@@ -2250,6 +2251,186 @@ function exportSLAResExcel(){
     ['Tiempo: columna Horas_Habiles de la SÁBANA_MAESTRA (horas hábiles, sin fines de semana ni feriados).'], ['Dentro de '+r.limites.h1+' h: tiempo ≤ '+r.limites.h1+' horas hábiles.'],
     ['Solo cifras agregadas: no contiene RUT ni identificadores de operación.']].concat((r.avisos||[]).map(function(a){ return ['Aviso: '+a]; })), [110]);
   XLSX.writeFile(wb, 'SLA_Resueltas_' + r.periodo.desde + '_a_' + r.periodo.hasta + '.xlsx');
+}
+
+// ─── PROPUESTA DE ASIGNACIÓN MHE (tubo de la sábana) ────────────────────────────────────────────────
+// SOLO PROPONE: no escribe en Firebase ni en el reparto de hoy. Está pensada para asignar en ONE.
+// Reglas: (1) las que ya tienen analista en la sábana no se tocan; (2) un reingreso vuelve a su analista anterior si está
+// disponible; (3) el resto se reparte de la más antigua (más horas hábiles) a la más reciente, al analista del producto con
+// más cupo libre. El cupo (21 lun–jue, 16 vie) cuenta solo lo asignado hoy.
+var ASIG_SIGLAS = {aperdigon:'Andrea', cbarrera:'Camila', cabarrera:'Camila', amena:'Argelis', icoelho:'Iliana', ijeldres:'Iliana',
+  ygil:'Yusbreili', jguerrero:'Josmar', vquintero:'Valentina', mcisternas:'Matias', mcisterna:'Matias'};
+var _asig = {ops:[], prep:null, previos:{}};
+
+function asigNorm(s){ return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
+function asigEsc(s){ return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function asigEsGenerico(s){ const n = asigNorm(s); return n === '' || n === 'primeraiteracion' || /^produ[a-z]*digital/.test(n); }
+// Texto de la sábana (sigla de correo, nombre o nombre completo) → nombre del equipo, o null si no se reconoce
+function asigResolver(s){
+  const n = asigNorm(s);
+  if(!n || asigEsGenerico(s)) return null;
+  let t = TEAM.find(function(x){ return x.email && asigNorm(String(x.email).split('@')[0]) === n; });
+  if(t) return t.name;
+  t = TEAM.find(function(x){ return asigNorm(x.name) === n; });
+  if(t) return t.name;
+  const m = ASIG_SIGLAS[n];
+  if(m){ t = TEAM.find(function(x){ return asigNorm(x.name) === asigNorm(m); }); if(t) return t.name; }
+  t = TEAM.find(function(x){ const a = asigNorm(x.name); return a.length >= 4 && n.indexOf(a) === 0; });
+  return t ? t.name : null;
+}
+function asigRut(s){ return String(s == null ? '' : s).replace(/[^0-9kK]/g, '').toLowerCase(); }
+
+// Separa el tubo en: ya asignadas / no reconocidas / Iván / ya en el reparto / por asignar (con horas en vivo)
+function asigPreparar(ops, ahoraMs){
+  const enReparto = {};
+  dayOps.forEach(function(o){ if(o._id_operacion) enReparto['i:' + o._id_operacion] = 1; const k = asigRut(o.identificador); if(k) enReparto['r:' + k] = 1; });
+  const r = {cand:[], conAnalista:{}, noReconocidos:{}, ivan:0, yaEnReparto:0, otroSegmento:0, total:ops.length};
+  ops.forEach(function(o){
+    const sn = asigNorm(o.segmento);
+    const seg = sn.indexOf('primeravivienda') >= 0 ? 'pv' : (sn.indexOf('subsidio') >= 0 ? 'subsidio' : null);
+    if(!seg){ r.otroSegmento++; return; }
+    if(enReparto['i:' + o.id_operacion] || enReparto['r:' + asigRut(o.rut)]){ r.yaEnReparto++; return; }
+    if(o.derivar_ivan){ r.ivan++; return; }
+    const actual = asigResolver(o.analista_actual);
+    if(actual){ r.conAnalista[actual] = (r.conAnalista[actual] || 0) + 1; return; }
+    if(!asigEsGenerico(o.analista_actual)){ const k = String(o.analista_actual).trim(); r.noReconocidos[k] = (r.noReconocidos[k] || 0) + 1; return; }
+    const ant = asigResolver(o.analista_anterior);
+    r.cand.push({op:o, seg:seg, h:slaTuboHoras(o, ahoraMs), ant:ant, reingreso:!!ant});
+  });
+  return r;
+}
+
+// Reparte los candidatos. previos = {analista: nº ya asignadas hoy}. Función pura (usa TEAM, availability, CAPS, dayType).
+function asigAsignar(cand, previos){
+  let cap = CAPS[dayType]; if(typeof cap !== 'number' || isNaN(cap)) cap = 21;
+  const carga = {}; Object.keys(previos).forEach(function(k){ carga[k] = previos[k] || 0; });
+  const pool = TEAM.filter(function(t){ return !t.products.includes('brasil') && availability[t.name]; });
+  const carg = function(n){ return carga[n] || 0; };
+  const filas = [];
+  const sueltos = [];
+  cand.forEach(function(c){
+    if(c.ant){
+      const t = TEAM.find(function(x){ return x.name === c.ant; });
+      if(t && availability[t.name]){
+        carga[c.ant] = carg(c.ant) + 1;
+        filas.push({c:c, analista:c.ant, motivo:'Reingreso: vuelve a su analista' + (carg(c.ant) > cap ? ' (sobre el cupo)' : '')});
+        return;
+      }
+      c.nota = 'su analista anterior (' + c.ant + ') no está disponible hoy';
+    }
+    sueltos.push(c);
+  });
+  sueltos.sort(function(a, b){ return (b.h === null ? -1 : b.h) - (a.h === null ? -1 : a.h); });
+  sueltos.forEach(function(c){
+    const menor = function(a, b){ return carg(a.name) - carg(b.name) || a.name.localeCompare(b.name); };
+    let elegido = pool.filter(function(t){ return !t.reserve && t.products.includes(c.seg) && carg(t.name) < cap; }).sort(menor)[0];
+    let motivo = c.nota ? 'Más antigua primero · ' + c.nota : 'Más antigua primero';
+    if(!elegido){
+      elegido = pool.filter(function(t){ return !t.reserve && carg(t.name) < cap; }).sort(menor)[0];
+      if(elegido) motivo = 'Sin analista del producto con cupo: se usa uno de otro producto';
+    }
+    if(!elegido){
+      elegido = pool.filter(function(t){ return t.reserve && t.products.includes(c.seg) && carg(t.name) < cap; }).sort(menor)[0];
+      if(elegido) motivo = 'Cupo agotado en el equipo: se usa reserva';
+    }
+    if(elegido){ carga[elegido.name] = carg(elegido.name) + 1; filas.push({c:c, analista:elegido.name, motivo:motivo}); }
+    else filas.push({c:c, analista:'', motivo:'Sin cupo disponible'});
+  });
+  filas.sort(function(a, b){ return (b.c.h === null ? -1 : b.c.h) - (a.c.h === null ? -1 : a.c.h); });
+  return {filas:filas, carga:carga, cap:cap};
+}
+
+async function proponerAsignacionMHE(){
+  const btn = document.getElementById('btn-asig-mhe'), est = document.getElementById('sla-rut-estado');
+  if(btn){ btn.disabled = true; btn.textContent = '⏳ Leyendo el tubo…'; }
+  try{
+    const r = await gsCall('getSLATubo', {});
+    if(!r || r.error) throw new Error((r && r.error) || 'Sin respuesta del servidor');
+    _asig.ops = r.ops || [];
+    _asig.prep = asigPreparar(_asig.ops, Date.now());
+    _asig.previos = {};
+    dayOps.forEach(function(o){ if(o.analista) _asig.previos[o.analista] = (_asig.previos[o.analista] || 0) + 1; });
+    asigMostrar();
+  }catch(e){
+    if(est){ est.style.color = '#C0392B'; est.textContent = 'No se pudo leer el tubo: ' + e.message; }
+    else alert('No se pudo leer el tubo: ' + e.message);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '🧮 Proponer asignación MHE'; }
+  }
+}
+function asigCerrar(){ const o = document.getElementById('asig-overlay'); if(o) o.remove(); }
+function asigLeerPrevios(){
+  document.querySelectorAll('.asig-prev').forEach(function(i){ _asig.previos[i.getAttribute('data-n')] = Math.max(0, parseInt(i.value, 10) || 0); });
+}
+function asigMostrar(){
+  asigCerrar();
+  const p = _asig.prep, R = asigAsignar(p.cand, _asig.previos);
+  _asig.res = R;
+  const nAsig = R.filas.filter(function(f){ return f.analista; }).length, nSin = R.filas.length - nAsig;
+  const nombres = TEAM.filter(function(t){ return !t.products.includes('brasil') && availability[t.name]; }).map(function(t){ return t.name; });
+  let h = '<div style="background:#fff;border-radius:14px;max-width:1040px;width:100%;max-height:92vh;overflow:auto;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.35);">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px;"><div style="font-size:17px;font-weight:800;color:var(--navy);">🧮 Propuesta de asignación MHE · más antiguas primero</div><button onclick="asigCerrar()" style="border:none;background:none;font-size:18px;cursor:pointer;color:var(--gray-text);">✕</button></div>';
+  h += '<div style="font-size:12px;color:var(--gray-text);margin-bottom:10px;">Solo propone: no guarda nada. Copia el resultado a ONE. Cupo por analista: <b>' + R.cap + '</b> (' + (dayType === 'V' ? 'viernes' : 'lunes a jueves') + '), solo lo asignado hoy.</div>';
+  h += '<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:12px;margin-bottom:10px;">'
+    + '<span style="background:#E3F6EA;padding:4px 10px;border-radius:8px;"><b>' + nAsig + '</b> asignadas en la propuesta</span>'
+    + '<span style="background:' + (nSin ? '#FCEBEB' : '#EEF1F4') + ';padding:4px 10px;border-radius:8px;"><b>' + nSin + '</b> sin cupo</span>'
+    + '<span style="background:#EEF1F4;padding:4px 10px;border-radius:8px;">Ya con analista en la sábana: <b>' + Object.keys(p.conAnalista).reduce(function(s, k){ return s + p.conAnalista[k]; }, 0) + '</b></span>'
+    + '<span style="background:#EEF1F4;padding:4px 10px;border-radius:8px;">Derivadas a Iván (se cargan con su botón): <b>' + p.ivan + '</b></span>'
+    + '<span style="background:#EEF1F4;padding:4px 10px;border-radius:8px;">Ya en el reparto de hoy: <b>' + p.yaEnReparto + '</b></span>'
+    + (p.otroSegmento ? '<span style="background:#EEF1F4;padding:4px 10px;border-radius:8px;">Otro segmento (omitidas): <b>' + p.otroSegmento + '</b></span>' : '') + '</div>';
+  const nr = Object.keys(p.noReconocidos);
+  if(nr.length) h += '<div style="background:#FAEEDA;border:1px solid #E67E22;border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:10px;">⚠ Operaciones con una sigla de analista que el gestor no reconoce (no se reasignan): '
+    + nr.map(function(k){ return '<b>' + asigEsc(k) + '</b> ×' + p.noReconocidos[k]; }).join(', ') + '. Si es alguien del equipo, agrega su correo en la pestaña Equipo.</div>';
+  h += '<div style="font-weight:700;font-size:13px;margin:8px 0 4px;">Carga por analista (edita «ya asignadas hoy» si ya repartiste algo en ONE)</div>';
+  h += '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:12px;"><tr style="background:#F4F6F9;text-align:left;"><th style="padding:5px 8px;">Analista</th><th>Ya asignadas hoy</th><th>Propuestas</th><th>Total / cupo</th></tr>';
+  nombres.forEach(function(n){
+    const prop = R.filas.filter(function(f){ return f.analista === n; }).length, ya = _asig.previos[n] || 0, tot = ya + prop;
+    h += '<tr style="border-top:1px solid #E5E9EF;"><td style="padding:5px 8px;font-weight:600;">' + asigEsc(n) + '</td>'
+      + '<td><input class="asig-prev" data-n="' + asigEsc(n) + '" type="number" min="0" value="' + ya + '" style="width:60px;padding:3px 6px;border:1px solid var(--gray-line);border-radius:6px;"></td>'
+      + '<td>' + prop + '</td><td style="font-weight:700;color:' + (tot > R.cap ? '#C0392B' : '#1B7F4B') + ';">' + tot + ' / ' + R.cap + '</td></tr>';
+  });
+  h += '</table><div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">'
+    + '<button class="btn-secondary" onclick="asigLeerPrevios();asigMostrar()" style="padding:7px 14px;">↻ Recalcular</button>'
+    + '<button onclick="asigCopiar()" style="padding:7px 14px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:700;cursor:pointer;">📋 Copiar para ONE</button>'
+    + '<button class="btn-secondary" onclick="asigExcel()" style="padding:7px 14px;">⬇ Excel</button><span id="asig-msg" style="font-size:12px;align-self:center;color:var(--gray-text);"></span></div>';
+  h += '<div style="overflow:auto;max-height:46vh;border:1px solid #E5E9EF;border-radius:8px;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><tr style="background:#F4F6F9;text-align:left;position:sticky;top:0;"><th style="padding:5px 8px;">#</th><th>RUT</th><th>Producto</th><th>Categoría</th><th>Horas hábiles</th><th>Analista sugerido</th><th>Motivo</th></tr>';
+  R.filas.forEach(function(f, i){
+    const c = f.c, est = c.h === null ? 'plazo' : slaTuboEstado(c.h);
+    h += '<tr style="border-top:1px solid #EEF1F4;' + (f.analista ? '' : 'background:#FCEBEB;') + '"><td style="padding:4px 8px;">' + (i + 1) + '</td><td>' + asigEsc(c.op.rut) + '</td><td>' + (c.seg === 'pv' ? 'Primera Vivienda' : 'Subsidio') + '</td><td>' + asigEsc(c.op.categoria_sla) + '</td>'
+      + '<td style="font-weight:700;color:' + SLA_COL[est] + ';">' + (c.h === null ? '—' : c.h.toFixed(1)) + '</td><td style="font-weight:600;">' + asigEsc(f.analista || '—') + '</td><td style="color:var(--gray-text);">' + asigEsc(f.motivo) + '</td></tr>';
+  });
+  if(!R.filas.length) h += '<tr><td colspan="7" style="padding:14px;text-align:center;color:var(--gray-text);">No hay operaciones genéricas por asignar.</td></tr>';
+  h += '</table></div><div style="font-size:11px;color:var(--gray-text);margin-top:8px;">Reingresos: se asume que «Analista_Riesgo_Anterior» de la sábana es quien la revisó antes. Las horas se calculan en vivo con el reloj oficial (48 h hábiles).</div></div>';
+  const ov = document.createElement('div');
+  ov.id = 'asig-overlay';
+  ov.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,16,41,.55);z-index:9500;display:flex;align-items:center;justify-content:center;padding:16px;';
+  ov.innerHTML = h;
+  document.body.appendChild(ov);
+}
+function asigTSV(){
+  return (_asig.res ? _asig.res.filas : []).filter(function(f){ return f.analista; })
+    .map(function(f){ return [f.c.op.rut, f.c.op.id_operacion, f.analista].join('\t'); }).join('\n');
+}
+async function asigCopiar(){
+  const txt = asigTSV(), msg = document.getElementById('asig-msg');
+  try{ await navigator.clipboard.writeText(txt); if(msg) msg.textContent = '✓ Copiado (RUT, ID operación, analista)'; }
+  catch(e){
+    const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select();
+    try{ document.execCommand('copy'); if(msg) msg.textContent = '✓ Copiado (RUT, ID operación, analista)'; }catch(e2){ if(msg) msg.textContent = 'No se pudo copiar: usa el Excel.'; }
+    ta.remove();
+  }
+}
+function asigExcel(){
+  if(typeof XLSX === 'undefined'){ alert('No está disponible la librería de Excel en esta página.'); return; }
+  const filas = [['#','RUT','ID operación','Producto','Categoría SLA','Horas hábiles','Analista sugerido','Motivo']];
+  (_asig.res ? _asig.res.filas : []).forEach(function(f, i){
+    filas.push([i + 1, f.c.op.rut, f.c.op.id_operacion, f.c.seg === 'pv' ? 'Primera Vivienda' : 'Subsidio', f.c.op.categoria_sla,
+      f.c.h === null ? '' : Math.round(f.c.h * 10) / 10, f.analista, f.motivo]);
+  });
+  const wb = XLSX.utils.book_new(), ws = XLSX.utils.aoa_to_sheet(filas);
+  ws['!cols'] = [{wch:5},{wch:14},{wch:14},{wch:18},{wch:16},{wch:13},{wch:18},{wch:50}];
+  XLSX.utils.book_append_sheet(wb, ws, 'Propuesta');
+  XLSX.writeFile(wb, 'Propuesta_asignacion_MHE_' + new Date().toISOString().slice(0, 10) + '.xlsx');
 }
 
 // ─── CONSULTA DE SLA POR RUT / ID ───────────────────────────────────────────────────────────
