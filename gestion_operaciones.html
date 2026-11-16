@@ -312,6 +312,8 @@ tr:last-child td{border-bottom:none;}
         <button class="btn-secondary" onclick="abrirVerificadorUrgencias()" style="font-size:12px;padding:6px 12px;">🚨 Verificar urgencias</button>
         <button class="btn-secondary" onclick="abrirCargaRapida()" style="font-size:12px;padding:6px 12px;">⚡ Carga rápida</button>
         <button class="btn-secondary" onclick="abrirListaIvan()" title="Pega una lista de ID y RUT: quedan en el reparto de hoy con la marca de IA (Iván 100%)" style="font-size:12px;padding:6px 12px;">🤖 Cargar lista Iván 100%</button>
+        <button class="btn-secondary" id="btn-sla-rut" onclick="consultarSLAOperaciones()" title="Busca en la sábana los RUT cargados de Primera Vivienda y Subsidio: te dice cuántas horas hábiles llevan y asigna la urgencia" style="font-size:12px;padding:6px 12px;">⏱ Consultar SLA</button>
+        <span id="sla-rut-estado" style="font-size:11px;color:var(--gray-text);max-width:520px;"></span>
         <span class="hint" style="margin:0;">Ingresa RUT, ID o CPF de cada operación. El sistema asigna automáticamente; puedes cambiar la asignación.</span>
       </div>
     </div>
@@ -2192,6 +2194,150 @@ function exportSLAResExcel(){
   XLSX.writeFile(wb, 'SLA_Resueltas_' + r.periodo.desde + '_a_' + r.periodo.hasta + '.xlsx');
 }
 
+// ─── CONSULTA DE SLA POR RUT / ID ───────────────────────────────────────────────────────────
+// El gestor pregunta al Apps Script (acción getSLAPorIdentificadores) por una lista de RUT o IDs de operación y recibe,
+// para cada uno: si está pendiente o resuelta en la sábana, desde cuándo, segmento, categoría e iteración.
+// Las horas de las pendientes se calculan aquí, al instante, con el reloj oficial. Solo aplica a productos con RUT (MHE).
+var SLA_CONS_BG = {vencida:'#FCEBEB', urgente:'#FAEEDA', plazo:'#E3F6EA', resuelta:'#FFF4E5', noenc:'#EEF1F4', error:'#EEF1F4'};
+var SLA_CONS_RES = {aprobada:'Aprobada 100%', propuesta:'Aprobada con propuesta', devuelta:'Devuelta a comercial', rechazada:'Rechazada'};
+
+function slaProductoConsultable(key){ const p = PRODUCTS.find(function(x){ return x.key === key; }); return !!(p && p.idType === 'RUT'); }
+
+// Interpreta la respuesta del script para un identificador (función pura, sin DOM)
+function slaConsultaResumen(info, ahoraMs){
+  if(!info) return {clase:'error', horas:null, color:'#8A96A3', corto:'Sin respuesta', texto:'Sin respuesta del servidor'};
+  if(!info.encontrado){
+    const t = 'No aparece en la sábana MHE' + (info.motivo ? ' ('+info.motivo+')' : '');
+    return {clase:'noenc', horas:null, color:'#8A96A3', corto:'No está en la sábana', texto:t};
+  }
+  if(info.estado === 'pendiente'){
+    const ahora = (ahoraMs === undefined) ? Date.now() : ahoraMs;
+    const ini = sabanaAMs(info.fecha_envio);
+    let h = null;
+    if(ini !== null) h = horasHabilesSLA(ini + SLA_OFFSET_SABANA_H*3600000, ahora);
+    else if(typeof info.horas_sabana === 'number') h = info.horas_sabana;
+    const est = (h === null) ? 'plazo' : slaTuboEstado(h);
+    const etq = {vencida:'Vencida', urgente:'Urgente', plazo:'En plazo'}[est];
+    const txt = '⏱ ' + (h === null ? 'Pendiente' : h.toFixed(1) + ' h hábiles · ' + etq) + (info.duplicada_pendiente ? ' · ⚠ ' + info.n_pendientes + ' pendientes' : '');
+    return {clase:'pendiente', estadoSla:est, horas:h, color:SLA_COL[est], corto:txt, texto:txt};
+  }
+  const h = (typeof info.horas_sabana === 'number') ? info.horas_sabana : null;
+  const txt = '✔ Ya resuelta: ' + (SLA_CONS_RES[info.resolucion] || 'resuelta') + (h !== null ? ' · ' + h.toFixed(1) + ' h hábiles' : '');
+  return {clase:'resuelta', horas:h, color:'#BA7517', corto:txt, texto:txt};
+}
+
+// Aplica la respuesta a una operación del reparto. La urgencia automática solo SUBE (nunca baja una marca puesta a mano).
+function slaAplicarConsultaAOp(op, info, ahoraMs){
+  const r = slaConsultaResumen(info, ahoraMs), puestos = [];
+  op._sla_consulta = {
+    encontrado: !!(info && info.encontrado), estado: (info && info.estado) || '', resolucion: (info && info.resolucion) || '',
+    horas_sabana: (info && typeof info.horas_sabana === 'number') ? info.horas_sabana : null,
+    n_pendientes: (info && info.n_pendientes) || 0, dup: !!(info && info.duplicada_pendiente), motivo: (info && info.motivo) || '',
+    consultado_en: new Date().toISOString(), puestos: puestos
+  };
+  if(info && info.encontrado && info.estado === 'pendiente'){
+    if(!op._fecha_envio && info.fecha_envio){ op._fecha_envio = info.fecha_envio; puestos.push('_fecha_envio'); }
+    if(!op.fecha_riesgo && info.fecha_envio){ op.fecha_riesgo = info.fecha_envio.slice(0,10); puestos.push('fecha_riesgo'); }
+    if(!op._categoria_sla && info.categoria_sla){ op._categoria_sla = info.categoria_sla; puestos.push('_categoria_sla'); }
+    if(!op._id_operacion && info.id_operacion){ op._id_operacion = info.id_operacion; puestos.push('_id_operacion'); }
+    if(r.estadoSla === 'vencida' && op.tier !== 'vencido'){ op.tier = 'vencido'; op._tier_auto = 'vencido'; }
+    else if(r.estadoSla === 'urgente' && (op.tier || 'normal') === 'normal'){ op.tier = 'urgente'; op._tier_auto = 'urgente'; }
+  }
+  return r;
+}
+// Si se cambia el RUT, la consulta anterior deja de valer: se quita lo que ella había puesto
+function slaLimpiarConsultaOp(op){
+  if(!op || !op._sla_consulta) return;
+  (op._sla_consulta.puestos || []).forEach(function(k){ if(k === 'fecha_riesgo') op.fecha_riesgo = ''; else delete op[k]; });
+  if(op._tier_auto){ op.tier = 'normal'; delete op._tier_auto; }
+  delete op._sla_consulta;
+  document.querySelectorAll('[data-sla-uid="'+op.uid+'"]').forEach(function(el){ el.remove(); });
+}
+function slaRutBadgeHTML(op){
+  const c = op && op._sla_consulta; if(!c) return '';
+  const info = {encontrado:c.encontrado, estado:c.estado, resolucion:c.resolucion, horas_sabana:c.horas_sabana, fecha_envio:op._fecha_envio || '',
+                duplicada_pendiente:c.dup, n_pendientes:c.n_pendientes, motivo:c.motivo};
+  const r = slaConsultaResumen(info);
+  const bg = SLA_CONS_BG[r.clase === 'pendiente' ? r.estadoSla : r.clase] || '#EEF1F4';
+  const auto = op._tier_auto ? ' · urgencia asignada automáticamente' : '';
+  return '<span data-sla-uid="'+_urgEsc(op.uid)+'" title="'+_urgEsc(r.texto + auto)+'" style="display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;border-radius:8px;margin-left:6px;white-space:nowrap;background:'+bg+';color:'+r.color+';">'
+    + _urgEsc(r.corto) + (op._tier_auto ? ' ⚡' : '') + '</span>';
+}
+
+// Botón "⏱ Consultar SLA" de Operaciones: una sola consulta con todos los RUT cargados de Primera Vivienda y Subsidio
+async function consultarSLAOperaciones(){
+  const btn = document.getElementById('btn-sla-rut'), est = document.getElementById('sla-rut-estado');
+  const conId = dayOps.filter(function(o){ return String(o.identificador || '').trim(); });
+  const cand = conId.filter(function(o){ return slaProductoConsultable(o.productKey); });
+  if(!cand.length){
+    alert('No hay operaciones de Primera Vivienda o Subsidio con RUT cargado para consultar.\n\nLeasing, Pie y Brasil no están en la sábana MHE, y las filas sin RUT se consultan cuando lo completes.');
+    return;
+  }
+  const ids = Array.from(new Set(cand.map(function(o){ return String(o.identificador).trim(); })));
+  if(ids.length > 300){ alert('Máximo 300 RUT por consulta (hay '+ids.length+'). Consulta por partes.'); return; }
+  if(btn){ btn.disabled = true; btn.textContent = '⏳ Consultando…'; }
+  if(est){ est.textContent = ''; est.style.color = 'var(--gray-text)'; }
+  try{
+    const r = await gsCall('getSLAPorIdentificadores', {ids:ids});
+    if(r.error){
+      alert('No se pudo consultar el SLA: ' + r.error + (/desconoc/i.test(r.error) ? '\n\nFalta agregar la línea getSLAPorIdentificadores en Código.gs y crear una nueva versión de la implementación.' : ''));
+      return;
+    }
+    const ahora = Date.now(), cnt = {pend:0, venc:0, urg:0, res:0, noenc:0, dup:0, auto:0};
+    cand.forEach(function(o){
+      const antes = o.tier;
+      const rr = slaAplicarConsultaAOp(o, r.resultados[String(o.identificador).trim()], ahora);
+      if(rr.clase === 'pendiente'){ cnt.pend++; if(rr.estadoSla === 'vencida') cnt.venc++; else if(rr.estadoSla === 'urgente') cnt.urg++; if(o._sla_consulta.dup) cnt.dup++; }
+      else if(rr.clase === 'resuelta') cnt.res++;
+      else cnt.noenc++;
+      if(o.tier !== antes) cnt.auto++;
+    });
+    saveDraft(); buildOpsEntry();
+    const omit = conId.length - cand.length;
+    const partes = [cnt.pend + ' pendientes' + ((cnt.venc || cnt.urg) ? ' ('+cnt.venc+' vencidas, '+cnt.urg+' urgentes)' : '')];
+    if(cnt.res) partes.push('⚠ ' + cnt.res + ' ya resueltas');
+    if(cnt.noenc) partes.push(cnt.noenc + ' no aparecen');
+    if(cnt.dup) partes.push(cnt.dup + ' con más de una pendiente');
+    if(cnt.auto) partes.push('⚡ ' + cnt.auto + ' con urgencia asignada automáticamente');
+    if(omit) partes.push(omit + ' de otros productos no consultadas');
+    const e2 = document.getElementById('sla-rut-estado');
+    if(e2){ e2.textContent = 'SLA consultado: ' + partes.join(' · '); e2.style.color = (cnt.res || cnt.venc) ? '#BA7517' : 'var(--teal)'; }
+  }catch(e){
+    alert('No hubo respuesta del Apps Script: ' + e.message);
+  }finally{
+    if(btn){ btn.disabled = false; btn.textContent = '⏱ Consultar SLA'; }
+  }
+}
+
+// Verificador de urgencias: agrega el SLA a cada RUT/ID detectado (después de mostrar el resultado local)
+async function urgConsultarSLA(halladas, rutsSin, lineas){
+  const token = (window._urgSlaToken = (window._urgSlaToken || 0) + 1);
+  const entradas = halladas.map(function(e, i){ return {e:e, dom:'urg-sla-h'+i, li:i}; })
+    .concat(rutsSin.map(function(e, j){ return {e:e, dom:'urg-sla-r'+j, li:halladas.length + j}; }));
+  const ids = Array.from(new Set(entradas.map(function(x){ return String(x.e.tok.raw).trim(); }).filter(Boolean))).slice(0, 300);
+  if(!ids.length) return;
+  entradas.forEach(function(x){ const el = document.getElementById(x.dom); if(el) el.innerHTML = '<span style="color:var(--gray-text);">⏳ Consultando SLA en la sábana…</span>'; });
+  let r;
+  try{ r = await gsCall('getSLAPorIdentificadores', {ids:ids}); }catch(err){ r = {error: err.message}; }
+  if(token !== window._urgSlaToken || !document.getElementById('urg-resultado')) return;   // el usuario ya verificó otra cosa o cerró la ventana
+  const ahora = Date.now(), extra = lineas.slice();
+  entradas.forEach(function(x){
+    const el = document.getElementById(x.dom);
+    if(r.error){ if(el) el.innerHTML = '<span style="color:var(--gray-text);">SLA no disponible ('+_urgEsc(r.error)+')</span>'; return; }
+    const info = r.resultados[String(x.e.tok.raw).trim()], s = slaConsultaResumen(info, ahora);
+    const bg = SLA_CONS_BG[s.clase === 'pendiente' ? s.estadoSla : s.clase] || '#EEF1F4';
+    let det = '';
+    if(info && info.encontrado){
+      det = [info.segmento, info.categoria_sla ? (info.categoria_sla === 'Pre Aprobación' ? '🔶 Pre Aprobación' : '🔷 ' + info.categoria_sla) : '',
+             info.nro_iteracion ? info.nro_iteracion + 'ª iteración' : '', info.resolucion_ia ? '🤖 IA: ' + info.resolucion_ia : ''].filter(Boolean).join(' · ');
+    }
+    if(el) el.innerHTML = '<span style="display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:8px;background:'+bg+';color:'+s.color+';">'+_urgEsc(s.texto)+'</span>'
+      + (det ? ' <span style="font-size:11px;color:var(--gray-text);">'+_urgEsc(det)+'</span>' : '');
+    extra[x.li] = extra[x.li] + ' — SLA: ' + s.texto.replace(/^[⏱✔]\s*/, '');
+  });
+  if(!r.error) window._urgResumenTxt = extra.join('\n');
+}
+
 // ─── CARGAR LISTA "IVÁN 100%" ───────────────────────────────────────────────────────────────────
 // Para operaciones que el equipo sabe que pasaron por Iván al 100% (p. ej. un reporte de Iván) y que la sábana no marca así.
 // Se pegan como ID + RUT y quedan en el reparto de hoy con la marca 🤖 IA · APROBADO_100 (igual que las que vienen de la sábana).
@@ -3078,7 +3224,8 @@ function buildOpsEntry(){
                     : op._reingreso
                     ? '<span style="background:#EDE7F6;color:#6A1B9A;font-size:9px;font-weight:700;padding:2px 6px;border-radius:8px;">🔁 Reingreso</span>'
                     : '')
-                    + (op._categoria_sla ? '<div style="margin-top:3px;">'+catBadgeHTML(op)+'</div>' : '');
+                    + (op._categoria_sla ? '<div style="margin-top:3px;">'+catBadgeHTML(op)+'</div>' : '')
+                    + (op._sla_consulta ? '<div style="margin-top:3px;">'+slaRutBadgeHTML(op)+'</div>' : '');
                   return `<tr style="border-bottom:1px solid var(--gray-line);">
                     <td style="padding:7px 8px;">${p.name} <span class="role-badge ${p.key==='brasil'?'brasil':''}">${p.idType}</span></td>
                     <td style="padding:7px 8px;"><input type="text" value="${op.identificador||''}" placeholder="Se completa después" oninput="updateOp('${op.uid}','identificador',this.value)" style="border:none;border-bottom:1px dashed var(--gray-line);background:transparent;font-size:12px;width:140px;outline:none;padding:1px 2px;"></td>
@@ -3194,7 +3341,7 @@ function opRowHTML(op, p){
   const ivanBadge = iaBadgeHTML(op) + (op._categoria_sla ? ' '+catBadgeHTML(op) : '');
   return `<div class="op-row${op._needs_review?' needs-review':''}" id="oprow-${op.uid}">
     ${ivanBadge}
-    <input type="text" value="${op.identificador}" placeholder="${placeholder}" oninput="updateOp('${op.uid}','identificador',this.value)" style="max-width:180px;">
+    <input type="text" value="${op.identificador}" placeholder="${placeholder}" oninput="updateOp('${op.uid}','identificador',this.value)" style="max-width:180px;">${slaRutBadgeHTML(op)}
     <select onchange="updateOp('${op.uid}','analista',this.value)">
       <option value="">Sin asignar</option>${analystOpts}
     </select>
@@ -3312,7 +3459,9 @@ function updateOp(uid, field, value){
   }
   if(field==='identificador'){
     checkDuplicates();
+    slaLimpiarConsultaOp(op);
   }
+  if(field==='tier') delete op._tier_auto;
   saveDraft();
 }
 
@@ -3668,6 +3817,15 @@ async function confirmDay(){
       '\n\n¿Deseas confirmar el reparto de todas formas?'
     );
     if(!proceed) return;
+  }
+
+  // Operaciones que la consulta de SLA mostró como YA RESUELTAS en la sábana
+  const yaRes = dayOps.filter(function(o){ return o._sla_consulta && o._sla_consulta.estado === 'resuelta'; });
+  if(yaRes.length > 0){
+    const lista = yaRes.slice(0,8).map(function(o){ return '• '+(o.identificador||'(vacío)')+' → '+(SLA_CONS_RES[o._sla_consulta.resolucion]||'resuelta')+' ('+(o.analista||'sin asignar')+')'; }).join('\n');
+    const okRes = window.confirm('⚠ '+yaRes.length+' operación(es) ya aparecen RESUELTAS en la sábana:\n\n'+lista+(yaRes.length>8?'\n…':'')+
+      '\n\nSi es un reingreso que aún no llega a la sábana, puedes continuar.\n¿Confirmar el reparto de todas formas?');
+    if(!okRes) return;
   }
 
   // Los volúmenes que se guardan deben ser los de ESTA fecha (los que se ven en Planificación)
@@ -4141,19 +4299,19 @@ async function verificarUrgencias(){
     + '✅ '+halladas.length+' asignadas · ⚠️ '+rutsSin.length+' sin asignar'
     + (sinMarca ? ' · ⚡ '+sinMarca+' sin marca de urgencia' : '') + '</div>';
 
-  halladas.forEach(function(e){
+  halladas.forEach(function(e, hi){
     html += '<div style="border:1px solid var(--gray-line);border-radius:8px;padding:8px 10px;margin-bottom:6px;">'
       + '<div style="font-size:12px;font-weight:700;color:var(--navy);">✅ '+_urgEsc(e.tok.raw)+'</div>';
     e.hoy.forEach(function(o){ html += _urgFilaOp(o,'hoy',currentDate); });
     e.borr.forEach(function(o){ html += _urgFilaOp(o,'borrador',currentDate); });
     e.ayer.forEach(function(o){ html += _urgFilaOp(o,'ayer',fechaAyer); });
-    html += '</div>';
+    html += '<div id="urg-sla-h'+hi+'" style="padding:2px 0 4px 14px;font-size:12px;"></div></div>';
     const o0 = (e.hoy[0]||e.borr[0]||e.ayer[0]);
     const pref = e.hoy.length ? 'Asignada a ' : e.borr.length ? 'En borrador (sin confirmar), asignada a ' : 'Asignada ayer ('+fechaAyer+') a ';
     lineas.push(e.tok.raw+' — '+pref+(o0.analista||'Sin asignar')+' ('+o0.estado+')'+(e.hoy.length && (o0.tier||'normal')==='normal' ? ' — sin marca de urgencia' : ''));
   });
-  rutsSin.forEach(function(e){
-    html += '<div style="border:1px solid #F5C6CB;background:#FFF5F5;border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12px;"><b style="color:#C0392B;">⚠️ '+_urgEsc(e.tok.raw)+'</b> — no está en el reparto de hoy ni de ayer.</div>';
+  rutsSin.forEach(function(e, ri){
+    html += '<div style="border:1px solid #F5C6CB;background:#FFF5F5;border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12px;"><b style="color:#C0392B;">⚠️ '+_urgEsc(e.tok.raw)+'</b> — no está en el reparto de hoy ni de ayer.<div id="urg-sla-r'+ri+'" style="margin-top:3px;"></div></div>';
     lineas.push(e.tok.raw+' — NO está en el reparto');
   });
   if(numsSin.length){
@@ -4163,6 +4321,7 @@ async function verificarUrgencias(){
   html += '<div style="margin-top:10px;"><button onclick="copiarResumenUrgencias()" style="padding:6px 14px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-size:12px;font-weight:600;cursor:pointer;">📋 Copiar resumen</button></div>';
   window._urgResumenTxt = lineas.join('\n');
   out.innerHTML = html;
+  urgConsultarSLA(halladas, rutsSin, lineas);   // el SLA aparece unos segundos después, sin bloquear el resultado local
 }
 
 function copiarResumenUrgencias(){
