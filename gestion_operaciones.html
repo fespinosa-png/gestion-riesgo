@@ -1382,11 +1382,20 @@ function initFirebaseAuth(){
 
 // Al abrir la página, el equipo se lee ANTES de que Firebase confirme la sesión (esa lectura sale sin token).
 // Con la lectura pública cerrada fallaría y se usaría el equipo por defecto: por eso se recarga apenas hay sesión.
+var _planPostLoginHecho = false;
 async function _fbPostLogin(user){
   try{
     await loadTeamFromGS();
     renderEquipo(); initUserSelect(); updateCapLabels();
   }catch(e){ console.log('No se pudo recargar el equipo tras iniciar sesión:', e); }
+  // La planificación del día también se leyó antes de la sesión (sin token): se vuelve a leer ahora,
+  // salvo que ya haya una guardada en este navegador, para no mostrar ni confirmar los valores por defecto.
+  try{
+    if(!_planPostLoginHecho){
+      _planPostLoginHecho = true;
+      if(!localStorage.getItem('plan:'+currentDate) && typeof cambiarFechaPlan === 'function') await cambiarFechaPlan(currentDate);
+    }
+  }catch(e){ console.log('No se pudo recargar la planificación tras iniciar sesión:', e); }
   try{
     if(!currentUser){
       const match = matchGoogleEmailToTeam(user.email);
@@ -3097,6 +3106,25 @@ function volsDesdePantalla(){
   });
   return v;
 }
+// Guarda la planificación del día. Si ya había una confirmada con otros volúmenes, pregunta antes de reemplazarla;
+// si se conserva la original, la reconfirmación queda en «ultimaConfirmacion» y lo planificado no se pisa.
+async function guardarPlanificacionDia(planData){
+  const ruta = 'planificacion/' + planData.date;
+  let previa = null;
+  try{ previa = _planParse(await fbGet(ruta)); }catch(e){}
+  const suma = function(p){ let t = 0; if(p && p.vols) Object.values(p.vols).forEach(function(v){ t += parseInt((v && v.total) || 0); }); return t; };
+  const sPrev = suma(previa), sNueva = suma(planData);
+  if(previa && sPrev > 0 && sPrev !== sNueva){
+    const reemplazar = window.confirm('Ya hay una planificación confirmada para ' + planData.date + ' con ' + sPrev + ' operaciones planificadas, y la pantalla ahora muestra ' + sNueva + '.\n\n¿Reemplazar la planificación original por la actual?\n\nAceptar = reemplazar\nCancelar = conservar la original (recomendado si solo estás reconfirmando el reparto)');
+    if(!reemplazar){
+      const ult = {confirmedBy: planData.confirmedBy, confirmedAt: planData.confirmedAt, totalOps: planData.totalOps, vols: planData.vols, teamSize: planData.teamSize};
+      await fbSet(ruta, JSON.stringify(Object.assign({}, previa, {ultimaConfirmacion: ult})));
+      return 'conservada';
+    }
+  }
+  await fbSet(ruta, JSON.stringify(planData));
+  return 'guardada';
+}
 function _planParse(data){
   if(!data) return null;
   try{ return typeof data==='string' ? JSON.parse(data) : data; }catch(e){ return null; }
@@ -4077,6 +4105,12 @@ async function confirmDay(){
   // Los volúmenes que se guardan deben ser los de ESTA fecha (los que se ven en Planificación)
   const volsPant = volsDesdePantalla();
   const totalPant = Object.keys(volsPant).reduce(function(s,k){ return s+volsPant[k].total; }, 0);
+  // Si todos los volúmenes son exactamente los valores por defecto, casi seguro no se cargó la planificación del día
+  const sonDefecto = PRODUCTS.every(function(p){ return (volsPant[p.key]||{}).total === p.dflt && !(volsPant[p.key]||{}).urgent; });
+  if(sonDefecto){
+    const okDef = window.confirm('⚠ Los volúmenes de '+currentDate+' son exactamente los valores por defecto ('+totalPant+' operaciones). Probablemente la planificación del día no se cargó.\n\nAceptar = confirmar igual con estos volúmenes.\nCancelar = volver a Planificación a ingresar los volúmenes reales.');
+    if(!okDef) return;
+  }
   if(currentDate !== todayISO() || totalPant === 0){
     const det = PRODUCTS.map(function(p){ return p.name+' '+((volsPant[p.key]||{}).total||0); }).join(' · ');
     const okVol = window.confirm('Se guardará la planificación del '+currentDate+':\n'+det+'\nTotal: '+totalPant+' operaciones.\n\n¿Son los volúmenes de esa fecha?\nAceptar = confirmar. Cancelar = volver a Planificación a corregirlos.');
@@ -4127,7 +4161,7 @@ async function confirmDay(){
           teamSize: activeAnalistas,
           availability: Object.assign({}, availability)
         };
-        await fbSet('planificacion/'+currentDate, JSON.stringify(planData));
+        await guardarPlanificacionDia(planData);
       }catch(e){ console.warn('No se pudo guardar planificación en Firebase:', e); }
       // También intentar OperacionesV2 en background
       store.setOps(currentDate, dayOps, currentUser||'--')
@@ -4167,7 +4201,7 @@ async function confirmDay(){
           teamSize: activeAnalistas,
           availability: Object.assign({}, availability)
         };
-        await fbSet('planificacion/'+currentDate, JSON.stringify(planData));
+        await guardarPlanificacionDia(planData);
       }catch(e){ console.warn('No se pudo guardar planificación en Firebase:', e); }
       // También intentar OperacionesV2 en background
       store.setOps(currentDate, dayOps, currentUser||'--')
