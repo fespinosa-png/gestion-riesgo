@@ -5758,6 +5758,210 @@ async function dashIngresosAgregar(chart, weekDays, ops){
     if(nota) nota.textContent = 'Ingresadas por el área comercial no disponible: ' + e.message + (/desconocid/i.test(e.message) ? ' (falta agregar la acción getIngresosMHE en Código.gs y crear una nueva versión de la implementación)' : '');
   }
 }
+// ─── SOLICITUDES DEL PERÍODO (tarjeta del Dashboard) ──────────────────────────────────────────────────────
+// MHE (Primera Vivienda y Subsidio): según la sábana (acción getIngresosMHE → por_segmento): ingresos = primera iteración,
+// reingresos = iteración 2 o más, solicitudes = todos los envíos. Se cuentan los días corridos del período (incluye fines de semana).
+// Leasing, Pie y Brasil: según el gestor = operaciones asignadas en los días del período (no distingue reingresos).
+async function dashSolicitudesRender(weekDays, ops){
+  const body = document.getElementById('dashboard-body');
+  if(!body || !weekDays || !weekDays.length) return;
+  let box = document.getElementById('dash-solicitudes');
+  if(!box){
+    box = document.createElement('div');
+    box.id = 'dash-solicitudes';
+    box.style.cssText = 'background:#fff;border:1px solid var(--gray-line);border-radius:12px;padding:16px;';
+    body.appendChild(box);
+  }
+  const desde = weekDays[0], hasta = weekDays[weekDays.length - 1];
+  box.innerHTML = '<div style="font-weight:700;color:var(--navy);margin-bottom:6px;">Solicitudes del período ' + _urgEsc(desde) + ' → ' + _urgEsc(hasta) + '</div><div style="font-size:12px;color:#6b7a90;">Cargando…</div>';
+  const idx = {}; weekDays.forEach(function(d){ idx[d] = true; });
+  const gest = {leasing:0, pie:0, brasil:0};
+  (ops || []).forEach(function(op){ if(op && idx[op._date] && gest[op.productKey] !== undefined) gest[op.productKey]++; });
+  let seg = null, errMsg = '';
+  try{
+    const r = await dashMHEFetch(desde, hasta);
+    if(!r || r.error) throw new Error((r && r.error) || 'sin respuesta');
+    if(!r.por_segmento) throw new Error('falta actualizar el Apps Script (la acción getIngresosMHE no trae el detalle por producto)');
+    seg = r.por_segmento;
+  }catch(e){ errMsg = e.message || String(e); }
+  const num = function(v){ return (v === null || v === undefined) ? '—' : Number(v).toLocaleString('es-CL'); };
+  const fila = function(nombre, ing, rei, tot, fuente, bold){
+    return '<tr' + (bold ? ' style="font-weight:700;background:#f3f6fa;"' : '') + '><td style="padding:6px 8px;">' + nombre + '</td><td style="padding:6px 8px;text-align:right;">' + num(ing) + '</td><td style="padding:6px 8px;text-align:right;">' + num(rei) + '</td><td style="padding:6px 8px;text-align:right;font-weight:700;">' + num(tot) + '</td><td style="padding:6px 8px;color:#6b7a90;font-size:11px;">' + fuente + '</td></tr>';
+  };
+  let rows = '', tIng = 0, tRei = 0, tTot = 0, hayMHE = false;
+  if(seg){
+    const g = function(k){ return seg[k] || {ingresos:0, reingresos:0, total:0}; };
+    const pv = g('Primera Vivienda'), su = g('Subsidio');
+    let otros = {ingresos:0, reingresos:0, total:0};
+    Object.keys(seg).forEach(function(k){ if(k !== 'Primera Vivienda' && k !== 'Subsidio'){ otros.ingresos += seg[k].ingresos; otros.reingresos += seg[k].reingresos; otros.total += seg[k].total; } });
+    rows += fila('Primera Vivienda (MHE)', pv.ingresos, pv.reingresos, pv.total, 'Sábana');
+    rows += fila('Subsidio (MHE)', su.ingresos, su.reingresos, su.total, 'Sábana');
+    if(otros.total) rows += fila('Otros MHE', otros.ingresos, otros.reingresos, otros.total, 'Sábana');
+    [pv, su, otros].forEach(function(x){ tIng += x.ingresos; tRei += x.reingresos; tTot += x.total; });
+    hayMHE = true;
+  }else{
+    rows += '<tr><td colspan="5" style="padding:8px;color:#BA7517;font-size:12px;">MHE no disponible: ' + _urgEsc(errMsg) + '</td></tr>';
+  }
+  rows += fila('Leasing Habitacional', null, null, gest.leasing, 'Gestor (asignadas)');
+  rows += fila('Pie Hipotecario', null, null, gest.pie, 'Gestor (asignadas)');
+  rows += fila('Brasil', null, null, gest.brasil, 'Gestor (asignadas)');
+  const totalGeneral = tTot + gest.leasing + gest.pie + gest.brasil;
+  rows += fila('Total solicitudes', hayMHE ? tIng : null, hayMHE ? tRei : null, hayMHE ? totalGeneral : null, '', true);
+  box.innerHTML = '<div style="font-weight:700;color:var(--navy);margin-bottom:2px;">Solicitudes del período ' + _urgEsc(desde) + ' → ' + _urgEsc(hasta) + '</div>'
+    + '<div style="font-size:11px;color:#6b7a90;margin-bottom:8px;">Ingresos = primera vez que llega a riesgo · Reingresos = vuelve a enviarse · Solicitudes = ingresos + reingresos. MHE desde la sábana; Leasing, Pie y Brasil desde el gestor (no distingue reingresos). No se filtra por analista.</div>'
+    + '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;color:var(--navy);"><thead><tr style="border-bottom:2px solid var(--gray-line);text-align:right;"><th style="padding:6px 8px;text-align:left;">Producto</th><th style="padding:6px 8px;">Ingresos</th><th style="padding:6px 8px;">Reingresos</th><th style="padding:6px 8px;">Solicitudes</th><th style="padding:6px 8px;text-align:left;">Fuente</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+// ─── RESULTADOS DEL PERÍODO (tarjeta del Dashboard): aprobadas, devueltas y rechazadas por producto ─────────
+// MHE (Primera Vivienda y Subsidio): resolución de cada envío según la sábana (por fecha de envío; las pendientes no entran al %).
+// Leasing, Pie y Brasil: resultado registrado en el gestor para las operaciones asignadas en el período.
+var _dashMHEcache = {key:'', t:0, p:null};
+function dashMHEFetch(desde, hasta){
+  const key = desde + '|' + hasta, ahora = Date.now();
+  if(_dashMHEcache.p && _dashMHEcache.key === key && ahora - _dashMHEcache.t < 20000) return _dashMHEcache.p;
+  const p = gsCall('getIngresosMHE', {desde: desde, hasta: hasta});
+  _dashMHEcache = {key:key, t:ahora, p:p};
+  p.catch(function(){ if(_dashMHEcache.p === p) _dashMHEcache.p = null; });
+  return p;
+}
+var _dashResProd = '', _dashResEstado = null;
+// ─── RESULTADOS POR RUT (vista de la tarjeta «Resultados del período»): estado final de cada RUT, por mes y últimos 3 meses ───
+var _dashResModo = 'solicitud', _dashRutEstado = null;
+function dashRutPeriodos(hasta){
+  const y = parseInt(hasta.slice(0, 4), 10), m = parseInt(hasta.slice(5, 7), 10) - 1;
+  const MES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const pad = function(n){ return ('0' + n).slice(-2); };
+  const fin = function(yy, mm){ return new Date(Date.UTC(yy, mm + 1, 0)).getUTCDate(); };
+  const ps = [];
+  for(let k = 2; k >= 0; k--){
+    const d = new Date(Date.UTC(y, m - k, 1)), yy = d.getUTCFullYear(), mm = d.getUTCMonth();
+    const ult = k === 0 ? hasta : yy + '-' + pad(mm + 1) + '-' + pad(fin(yy, mm));
+    ps.push({k: MES[mm] + (k === 0 ? ' (hasta ' + hasta.slice(8) + ')' : ''), desde: yy + '-' + pad(mm + 1) + '-01', hasta: ult});
+  }
+  ps.push({k: 'Últimos 3 meses', desde: ps[0].desde, hasta: hasta});
+  return ps;
+}
+async function dashResultadosRutCargar(){
+  const box = document.getElementById('dash-resultados');
+  const base = _dashResEstado ? _dashResEstado.hasta : todayISO();
+  const ps = dashRutPeriodos(base);
+  if(box) box.querySelector('#dash-res-cuerpo').innerHTML = '<div style="font-size:12px;color:#6b7a90;">Calculando por RUT (lee toda la sábana, puede tardar unos segundos)…</div>';
+  try{
+    const r = await gsCall('getIngresosMHE', {desde: ps[0].desde, hasta: base, periodos_rut: ps});
+    if(!r || r.error) throw new Error((r && r.error) || 'sin respuesta');
+    if(!r.por_rut) throw new Error('falta actualizar el Apps Script (la acción getIngresosMHE no trae la vista por RUT)');
+    _dashRutEstado = {ps: ps, datos: r.por_rut, error: ''};
+  }catch(e){ _dashRutEstado = {ps: ps, datos: null, error: e.message || String(e)}; }
+  dashResultadosPintar();
+}
+function dashResultadosRutHtml(sel){
+  const E = _dashRutEstado;
+  if(!E) return '<div style="font-size:12px;color:#6b7a90;">Cargando…</div>';
+  if(!E.datos) return '<div style="font-size:12px;color:#BA7517;">Por RUT no disponible: ' + _urgEsc(E.error) + '</div>';
+  const segSel = sel === 'pv' ? 'Primera Vivienda' : sel === 'subsidio' ? 'Subsidio' : '';
+  if(sel && !segSel) return '<div style="font-size:12px;color:#6b7a90;">La vista por RUT solo existe para Primera Vivienda y Subsidio (sábana). Elige «Todos» o un producto MHE.</div>';
+  const pct = function(x, t){ return t ? (x / t * 100).toFixed(1).replace('.', ',') + '%' : '—'; };
+  const cel = function(x, t, c){ return '<td style="padding:6px 8px;text-align:right;">' + x.toLocaleString('es-CL') + ' <span style="color:' + c + ';font-weight:700;">' + pct(x, t) + '</span></td>'; };
+  let rows = '';
+  E.ps.forEach(function(p, i){
+    const seg = E.datos[p.k] || {};
+    const b = {rut:0, aprobado:0, devuelto:0, rechazado:0, pendiente:0, con_devolucion:0, recuperados:0};
+    Object.keys(seg).forEach(function(k){ if(segSel && k !== segSel) return; Object.keys(b).forEach(function(f){ b[f] += seg[k][f] || 0; }); });
+    const res = b.aprobado + b.devuelto + b.rechazado;
+    const ult = i === E.ps.length - 1;
+    rows += '<tr' + (ult ? ' style="font-weight:700;background:#f3f6fa;"' : '') + '><td style="padding:6px 8px;">' + _urgEsc(p.k) + '</td><td style="padding:6px 8px;text-align:right;">' + b.rut.toLocaleString('es-CL') + '</td><td style="padding:6px 8px;text-align:right;">' + res.toLocaleString('es-CL') + '</td>'
+      + cel(b.aprobado, res, '#27AE60') + cel(b.devuelto, res, '#E67E22') + cel(b.rechazado, res, '#C0392B')
+      + '<td style="padding:6px 8px;text-align:right;">' + b.recuperados.toLocaleString('es-CL') + ' de ' + b.con_devolucion.toLocaleString('es-CL') + ' <span style="color:#27AE60;font-weight:700;">' + pct(b.recuperados, b.con_devolucion) + '</span></td></tr>';
+  });
+  return '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;color:var(--navy);"><thead><tr style="border-bottom:2px solid var(--gray-line);text-align:right;"><th style="padding:6px 8px;text-align:left;">Período</th><th style="padding:6px 8px;">RUT</th><th style="padding:6px 8px;">Resueltos</th><th style="padding:6px 8px;">Aprobado</th><th style="padding:6px 8px;">Devuelto</th><th style="padding:6px 8px;">Rechazado</th><th style="padding:6px 8px;">Devueltos que terminan aprobados</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+    + '<div style="font-size:11px;color:#6b7a90;margin-top:6px;">Un RUT cuenta una vez y se clasifica por el resultado de su último envío a hoy. «Devuelto» es un estado abierto: comercial aún puede corregir y reenviar. Los pendientes no entran al %. Los RUT no se pueden sumar entre meses (el mismo RUT puede aparecer en varios). Solo MHE (sábana).</div>';
+}
+
+function dashResultadosModo(m){
+  _dashResModo = m;
+  if(m === 'rut' && (!_dashRutEstado || _dashRutEstado.error)){ dashResultadosPintar(); dashResultadosRutCargar(); return; }
+  dashResultadosPintar();
+}
+function dashResultadosPintar(){
+  const box = document.getElementById('dash-resultados'), E = _dashResEstado;
+  if(!box || !E) return;
+  const sel = _dashResProd;
+  if(_dashResModo === 'rut'){
+    const tabs = '<span style="display:inline-flex;gap:4px;"><button onclick="dashResultadosModo(\'solicitud\')" style="font-size:12px;padding:5px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer;">Por solicitud</button><button style="font-size:12px;padding:5px 10px;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:default;">Por RUT</button></span>';
+    const optsR = ['<option value="">Todos (MHE)</option><option value="pv"' + (sel === 'pv' ? ' selected' : '') + '>Primera Vivienda</option><option value="subsidio"' + (sel === 'subsidio' ? ' selected' : '') + '>Subsidio</option>'].join('');
+    box.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;"><div style="font-weight:700;color:var(--navy);">Resultados por RUT · últimos 3 meses</div><div style="display:flex;gap:8px;align-items:center;">' + tabs
+      + '<select onchange="_dashResProd=this.value;dashResultadosPintar();" style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-line);border-radius:8px;color:var(--navy);background:#fff;">' + optsR + '</select></div></div><div id="dash-res-cuerpo">' + dashResultadosRutHtml(sel) + '</div>';
+    return;
+  }
+  const defs = [
+    {k:'pv', n:'Primera Vivienda (MHE)', f:'Sábana'}, {k:'subsidio', n:'Subsidio (MHE)', f:'Sábana'},
+    {k:'leasing', n:'Leasing Habitacional', f:'Gestor'}, {k:'pie', n:'Pie Hipotecario', f:'Gestor'}, {k:'brasil', n:'Brasil', f:'Gestor'}
+  ];
+  const pct = function(x, t){ return t ? (x / t * 100).toFixed(1).replace('.', ',') + '%' : '—'; };
+  const celda = function(x, t, color){ return '<td style="padding:6px 8px;text-align:right;">' + (x === null ? '—' : Number(x).toLocaleString('es-CL')) + ' <span style="color:' + color + ';font-weight:700;">' + (x === null ? '' : pct(x, t)) + '</span></td>'; };
+  let rows = '', T = {ap:0, dv:0, rc:0, pend:0}, hayAlgo = false;
+  defs.forEach(function(d){
+    if(sel && sel !== d.k) return;
+    const r = E.datos[d.k];
+    if(!r){ rows += '<tr><td style="padding:6px 8px;">' + d.n + '</td><td colspan="5" style="padding:6px 8px;color:#BA7517;font-size:12px;">' + _urgEsc(E.errores[d.f] || 'sin datos') + '</td></tr>'; return; }
+    hayAlgo = true;
+    const tot = r.ap + r.dv + r.rc;
+    T.ap += r.ap; T.dv += r.dv; T.rc += r.rc; T.pend += r.pend;
+    rows += '<tr><td style="padding:6px 8px;">' + d.n + '</td><td style="padding:6px 8px;text-align:right;font-weight:700;">' + tot.toLocaleString('es-CL') + '</td>'
+      + celda(r.ap, tot, '#27AE60') + celda(r.dv, tot, '#E67E22') + celda(r.rc, tot, '#C0392B')
+      + '<td style="padding:6px 8px;text-align:right;color:#6b7a90;">' + r.pend.toLocaleString('es-CL') + '</td></tr>';
+  });
+  const tt = T.ap + T.dv + T.rc;
+  if(hayAlgo && !sel) rows += '<tr style="font-weight:700;background:#f3f6fa;"><td style="padding:6px 8px;">Total</td><td style="padding:6px 8px;text-align:right;">' + tt.toLocaleString('es-CL') + '</td>'
+    + celda(T.ap, tt, '#27AE60') + celda(T.dv, tt, '#E67E22') + celda(T.rc, tt, '#C0392B') + '<td style="padding:6px 8px;text-align:right;color:#6b7a90;">' + T.pend.toLocaleString('es-CL') + '</td></tr>';
+  const opts = ['<option value="">Todos los productos</option>'].concat(defs.map(function(d){ return '<option value="' + d.k + '"' + (sel === d.k ? ' selected' : '') + '>' + d.n + '</option>'; })).join('');
+  const errTxt = Object.keys(E.errores).map(function(k){ return k + ': ' + E.errores[k]; }).join(' · ');
+  box.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:4px;"><div style="font-weight:700;color:var(--navy);">Resultados del período ' + _urgEsc(E.desde) + ' → ' + _urgEsc(E.hasta) + '</div>'
+    + '<div style="display:flex;gap:8px;align-items:center;"><span style="display:inline-flex;gap:4px;"><button style="font-size:12px;padding:5px 10px;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:default;">Por solicitud</button><button onclick="dashResultadosModo(\'rut\')" style="font-size:12px;padding:5px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer;">Por RUT</button></span><select onchange="_dashResProd=this.value;dashResultadosPintar();" style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-line);border-radius:8px;color:var(--navy);background:#fff;">' + opts + '</select></div></div>'
+    + '<div style="font-size:11px;color:#6b7a90;margin-bottom:8px;">Resueltas = aprobadas (100% y con propuesta) + devueltas a comercial + rechazadas. El % es sobre las resueltas; las pendientes no entran. MHE según la sábana (por fecha de envío); Leasing, Pie y Brasil según el resultado registrado en el gestor. No se filtra por analista.</div>'
+    + '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;color:var(--navy);"><thead><tr style="border-bottom:2px solid var(--gray-line);text-align:right;"><th style="padding:6px 8px;text-align:left;">Producto</th><th style="padding:6px 8px;">Resueltas</th><th style="padding:6px 8px;">Aprobadas</th><th style="padding:6px 8px;">Devueltas</th><th style="padding:6px 8px;">Rechazadas</th><th style="padding:6px 8px;">Pendientes / sin resultado</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+    + (errTxt ? '<div style="font-size:11px;color:#BA7517;margin-top:6px;">' + _urgEsc(errTxt) + '</div>' : '');
+}
+async function dashResultadosRender(weekDays, ops){
+  const body = document.getElementById('dashboard-body');
+  if(!body || !weekDays || !weekDays.length) return;
+  let box = document.getElementById('dash-resultados');
+  if(!box){
+    box = document.createElement('div');
+    box.id = 'dash-resultados';
+    box.style.cssText = 'background:#fff;border:1px solid var(--gray-line);border-radius:12px;padding:16px;';
+    body.appendChild(box);
+  }
+  const desde = weekDays[0], hasta = weekDays[weekDays.length - 1];
+  box.innerHTML = '<div style="font-weight:700;color:var(--navy);margin-bottom:6px;">Resultados del período ' + _urgEsc(desde) + ' → ' + _urgEsc(hasta) + '</div><div style="font-size:12px;color:#6b7a90;">Cargando…</div>';
+  const idx = {}; weekDays.forEach(function(d){ idx[d] = true; });
+  const datos = {}, errores = {};
+  ['leasing', 'pie', 'brasil'].forEach(function(k){ datos[k] = {ap:0, dv:0, rc:0, pend:0}; });
+  (ops || []).forEach(function(op){
+    if(!op || !idx[op._date] || !datos[op.productKey]) return;
+    const t = op._resultado && op._resultado.tipo;
+    if(t === 'aprobada') datos[op.productKey].ap++;
+    else if(t === 'devuelta') datos[op.productKey].dv++;
+    else if(t === 'rechazada') datos[op.productKey].rc++;
+    else datos[op.productKey].pend++;
+  });
+  try{
+    const r = await dashMHEFetch(desde, hasta);
+    if(!r || r.error) throw new Error((r && r.error) || 'sin respuesta');
+    if(!r.por_segmento) throw new Error('falta actualizar el Apps Script (la acción getIngresosMHE no trae las resoluciones)');
+    const pick = function(nombre){
+      const x = r.por_segmento[nombre];
+      if(!x) return {ap:0, dv:0, rc:0, pend:0};
+      const q = x.res;
+      if(!q) throw new Error('falta actualizar el Apps Script (la acción getIngresosMHE no trae las resoluciones)');
+      return {ap:(q.aprobada || 0) + (q.propuesta || 0), dv:q.devuelta || 0, rc:q.rechazada || 0, pend:q.pendiente || 0};
+    };
+    datos.pv = pick('Primera Vivienda'); datos.subsidio = pick('Subsidio');
+  }catch(e){ errores['Sábana'] = e.message || String(e); }
+  _dashResEstado = {desde:desde, hasta:hasta, datos:datos, errores:errores};
+  dashResultadosPintar();
+}
+
 async function loadDashboard(){
   const body = document.getElementById('dashboard-body');
   const weekLabel = document.getElementById('dashboard-week-label');
@@ -6538,6 +6742,8 @@ async function loadDashboard(){
           },plugins:{...chartDefaults.plugins,legend:{display:true,position:'top',labels:{color:'#AABBD0',font:{size:10}}}}}});
           dashIngresosAgregar(chartPlanTubo, weekDays, opsSinFiltro);
         }
+        try{ dashSolicitudesRender(weekDays, opsSinFiltro); }catch(e){ console.warn('Solicitudes del período:', e); }
+        try{ dashResultadosRender(weekDays, opsSinFiltro); }catch(e){ console.warn('Resultados del período:', e); }
 
       }catch(chartErr){ console.warn('Error en gráficos:', chartErr); }
     }, 100);
