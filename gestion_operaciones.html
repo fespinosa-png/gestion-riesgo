@@ -2469,7 +2469,9 @@ function asigExcel(){
 // producto con cupo libre (más antigua primero). (4) Sin cupo, o no encontrada en el tubo: «forzada» → la asignas tú a los analistas que elijas.
 // Las forzadas quedan como adicionales (_forzada) y NO consumen el cupo del día. Todas entran como urgentes; si superan el SLA, como vencidas.
 var _urgA = {rows:[], forz:{}, prod:'pv', ids:{}};
-function urgAsigNombres(){ return TEAM.filter(function(t){ return !t.products.includes('brasil') && availability[t.name]; }).map(function(t){ return t.name; }); }
+// Todos los analistas del equipo (menos Brasil), estén o no disponibles hoy: para elegir a quién forzar una urgencia.
+function urgAsigNombres(){ return TEAM.filter(function(t){ return !t.products.includes('brasil'); }).map(function(t){ return t.name; }); }
+function urgAsigEtq(n){ return n + (availability[n] ? '' : ' (no disp.)'); }
 function urgAsigPreparar(rutsSin, tubo, prodSel, ahoraMs){
   const porRut = {};
   (tubo || []).forEach(function(o){ const k = asigRut(o.rut); if(k){ (porRut[k] = porRut[k] || []).push(o); } });
@@ -2542,11 +2544,12 @@ function urgAsigRender(){
   const rows = _urgA.rows, res = urgAsigCalcular(rows, _urgA.forz), nombres = urgAsigNombres();
   rows.sort(function(a, b){ return (b.h === null ? -1 : b.h) - (a.h === null ? -1 : a.h); });
   const E = _urgEsc;
-  const opts = function(v){ return '<option value="">—</option>' + nombres.map(function(n){ return '<option value="' + E(n) + '"' + (v === n ? ' selected' : '') + '>' + E(n) + '</option>'; }).join(''); };
+  const opts = function(v){ return '<option value="">—</option>' + nombres.map(function(n){ return '<option value="' + E(n) + '"' + (v === n ? ' selected' : '') + '>' + E(urgAsigEtq(n)) + '</option>'; }).join(''); };
   let h = '<div style="border:1px solid var(--gray-line);border-radius:10px;padding:10px 12px;margin-top:8px;background:#FAFBFD;">'
     + '<div style="font-weight:700;font-size:13px;color:var(--navy);margin-bottom:4px;">🚑 Asignar urgencias sin asignar</div>'
     + '<div style="font-size:11px;color:var(--gray-text);margin-bottom:6px;">Las que tienen cupo van a su analista; las <b>forzadas</b> (sin cupo o no encontradas) se reparten entre los analistas que marques abajo, o elige uno por fila. Las forzadas son adicionales: no consumen el cupo (' + res.cap + ' por analista).</div>'
-    + '<div style="font-size:12px;margin-bottom:8px;"><b>Analistas para forzadas:</b> ' + nombres.map(function(n){ return '<label style="margin-right:10px;white-space:nowrap;"><input type="checkbox" data-n="' + E(n) + '" ' + (_urgA.forz[n] ? 'checked ' : '') + 'onchange="_urgA.forz[this.getAttribute(\'data-n\')]=this.checked;urgAsigRender()"> ' + E(n) + ' <span style="color:var(--gray-text);">(' + (res.carga[n] || 0) + ')</span></label>'; }).join('') + '</div>';
+    + (nombres.length ? '' : '<div style="font-size:12px;color:#C0392B;margin-bottom:6px;">⚠ No hay analistas cargados en el equipo de este navegador. Abre la pestaña Equipo, revisa que estén cargados y vuelve a intentar.</div>')
+    + '<div style="font-size:12px;margin-bottom:8px;"><b>Analistas para forzadas:</b> ' + nombres.map(function(n){ return '<label style="margin-right:10px;white-space:nowrap;"><input type="checkbox" data-n="' + E(n) + '" ' + (_urgA.forz[n] ? 'checked ' : '') + 'onchange="_urgA.forz[this.getAttribute(\'data-n\')]=this.checked;urgAsigRender()"> ' + E(urgAsigEtq(n)) + ' <span style="color:var(--gray-text);">(' + (res.carga[n] || 0) + ')</span></label>'; }).join('') + '</div>';
   h += '<div style="overflow:auto;max-height:36vh;border:1px solid #E5E9EF;border-radius:8px;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><tr style="background:#F4F6F9;text-align:left;"><th style="padding:4px 8px;">✓</th><th>RUT</th><th>Producto</th><th>Horas háb.</th><th>Analista</th><th>Detalle</th></tr>';
   rows.forEach(function(r, i){
     const est = r.h === null ? 'plazo' : slaTuboEstado(r.h);
