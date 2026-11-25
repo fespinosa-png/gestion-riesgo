@@ -2087,6 +2087,41 @@ function slaDeltaHTML(a, b, nAnt, u, mejorBajo, neutro){
 }
 function slaColPct(p){ return p >= 80 ? '#27AE60' : (p >= 50 ? '#BA7517' : '#C0392B'); }
 
+// ─── SLA COMBINADO: MHE (sábana) + Pie Hipotecario + Leasing Habitacional (gestor, declarado al 100%) ───────────
+// Pie y Leasing no se miden desde la sábana: igual que en el reporte semanal, se asume 100% de cumplimiento sobre lo completado (estado Hecho en el gestor).
+async function slaCombinadoCompletar(r){
+  const el = document.getElementById('sla-comb-card');
+  if(!el) return;
+  const S = r.actual.resumen;
+  const dias = [];
+  for(let d = new Date(r.periodo.desde + 'T12:00:00'), fin = new Date(r.periodo.hasta + 'T12:00:00'); d <= fin && dias.length < 120; d.setDate(d.getDate() + 1)){
+    const dow = d.getDay(); if(dow === 0 || dow === 6) continue;
+    dias.push(d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2));
+  }
+  let leasing = 0, pie = 0, fallidos = 0;
+  try{
+    for(let i = 0; i < dias.length; i += 8){
+      await Promise.all(dias.slice(i, i + 8).map(async function(date){
+        try{
+          const data = await fbGet('ops/' + date);
+          const ops = !data ? [] : (typeof data === 'string' ? JSON.parse(data) : (Array.isArray(data) ? data : []));
+          ops.forEach(function(op){ if(op && op.estado === 'HECHO'){ if(op.productKey === 'leasing') leasing++; else if(op.productKey === 'pie') pie++; } });
+        }catch(e){ fallidos++; }
+      }));
+    }
+    const pl = leasing + pie, dentro = S.dentro48 || 0, n = S.n || 0;
+    const pct = (n + pl) ? (dentro + pl) / (n + pl) * 100 : 0;
+    const p1 = Math.round(pct * 10) / 10;
+    el.querySelector('.v').textContent = p1.toFixed(1) + '%';
+    el.querySelector('.v').style.color = slaColMeta(p1);
+    el.querySelector('.s').innerHTML = slaMetaSub(p1) + '<div style="font-size:10px;color:var(--gray-text);margin-top:2px;">MHE ' + dentro + ' de ' + n + ' dentro de plazo + Pie ' + pie + ' + Leasing ' + leasing + ' (al 100%)' + (fallidos ? ' · ⚠ ' + fallidos + ' día(s) sin leer' : '') + '</div>';
+    window._slaComb = {pct: p1, dentro: dentro, n: n, pie: pie, leasing: leasing, desde: r.periodo.desde, hasta: r.periodo.hasta};
+  }catch(e){
+    el.querySelector('.v').textContent = '—';
+    el.querySelector('.s').innerHTML = '<div style="font-size:10px;color:#C0392B;">No se pudo calcular: ' + _urgEsc(e.message || String(e)) + '</div>';
+  }
+}
+
 function slaResHTML(r){
   const A = r.actual, S = A.resumen, P = r.anterior.resumen, E = _urgEsc;
   const nm = function(x){ return (x === undefined || x === null) ? 0 : x; };
@@ -2102,6 +2137,7 @@ function slaResHTML(r){
     + card(S.total, 'Resueltas', slaDeltaHTML(S.total, nm(P.total), nm(P.total), '', false, true))
     + card(S.prom.toFixed(1), 'SLA promedio (h hábiles)', slaDeltaHTML(S.prom, P.prom, P.n, ' h', true))
     + card(S.pct48.toFixed(1)+'%', 'Cumplimiento SLA MHE (≤ '+r.limites.h1+' h) · meta '+SLA_META+'%', slaMetaSub(S.pct48) + slaDeltaHTML(S.pct48, P.pct48, P.n, ' pp', false), slaColMeta(S.pct48))
+    + '<div id="sla-comb-card" style="flex:1;min-width:170px;background:#F4F7FA;border:1px solid var(--gray-line);border-radius:10px;padding:12px;text-align:center;"><div class="v" style="font-size:24px;font-weight:800;color:var(--navy);">…</div><div style="font-size:11px;color:var(--gray-text);">Cumplimiento combinado MHE + Pie + Leasing (Pie y Leasing al 100%)</div><div class="s"></div></div>'
     + card(S.pct24.toFixed(1)+'%', 'Dentro de '+r.limites.h2+' h', slaDeltaHTML(S.pct24, P.pct24, P.n, ' pp', false))
     + card(S.mediana.toFixed(1), 'Mediana (h)', slaDeltaHTML(S.mediana, P.mediana, P.n, ' h', true))
     + card(Number(S.p90).toFixed(1), 'P90 (h): el 90% se resolvió en menos', slaDeltaHTML(S.p90, P.p90, P.n, ' h', true))
@@ -2169,6 +2205,7 @@ async function slaResConsultar(){
     }
     window._slaRes = {r:r, cargadoEn:Date.now()};
     if(body) body.innerHTML = slaResHTML(r);
+    slaCombinadoCompletar(r);
     if(est) est.textContent = 'Sábana consultada a las ' + new Date().toLocaleTimeString('es-CL', {hour:'2-digit', minute:'2-digit'});
   }catch(e){
     if(body) body.innerHTML = '<div style="padding:14px;border:1px solid #F5C6CB;background:#FFF5F5;border-radius:8px;font-size:13px;color:#C0392B;">No hubo respuesta del Apps Script: '+_urgEsc(e.message)+'</div>';
@@ -2188,9 +2225,17 @@ function exportSLAResExcel(){
     ['SLA DE OPERACIONES RESUELTAS — SÁBANA_MAESTRA'], ['Período (por fecha de respuesta):', slaFmtRango(r.periodo)], ['Período anterior:', slaFmtRango(r.anterior.periodo)], ['Consultado:', new Date(d.cargadoEn).toLocaleString('es-CL')], [],
     ['Indicador','Período','Anterior'],
     ['Resueltas', S.total, P.total], ['Con horas hábiles', S.n, P.n], ['SLA promedio (h hábiles)', S.prom, P.prom], ['Mediana (h)', S.mediana, P.mediana], ['P90 (h)', S.p90, P.p90],
-    ['Cumplimiento SLA MHE: % dentro de '+r.limites.h1+' h (meta '+SLA_META+'%)', S.pct48, P.pct48], ['% dentro de '+r.limites.h2+' h', S.pct24, P.pct24], [],
+    ['Cumplimiento SLA MHE: % dentro de '+r.limites.h1+' h (meta '+SLA_META+'%)', S.pct48, P.pct48], ['% dentro de '+r.limites.h2+' h', S.pct24, P.pct24]
+  ].concat((function(){
+    const C = window._slaComb;
+    if(C && C.desde === r.periodo.desde && C.hasta === r.periodo.hasta){
+      return [['Pie Hipotecario completadas (gestor, estado Hecho)', C.pie], ['Leasing Habitacional completadas (gestor, estado Hecho)', C.leasing],
+        ['Cumplimiento combinado MHE + Pie + Leasing (Pie y Leasing al 100%)', C.pct]];
+    }
+    return [['Cumplimiento combinado MHE + Pie + Leasing', 'no calculado (espera a que la tarjeta termine de cargar y vuelve a exportar)']];
+  })()).concat([[],
     ['Mezcla de resultados','Cantidad'], ['Aprobada 100%', A.resoluciones.aprobada], ['Aprobada con propuesta', A.resoluciones.propuesta], ['Devuelta a comercial', A.resoluciones.devuelta], ['Rechazada', A.resoluciones.rechazada]
-  ], [38,24,24]);
+  ]), [38,24,24]);
   const cab = ['Resueltas','Prom. h','Mediana h','P90 h','% ≤'+r.limites.h1+' h','% ≤'+r.limites.h2+' h','Máx. h'];
   const fl = function(titulo, grupos){ return [[titulo].concat(cab)].concat(grupos.map(function(g){ return [g.clave, g.n, g.prom, g.mediana, g.p90, g.pct48, g.pct24, g.max]; })); };
   add('Segmento y categoría', fl('Segmento · Categoría', A.porSegCat), [34,11,9,10,8,10,10,8]);
@@ -2200,7 +2245,7 @@ function exportSLAResExcel(){
   add('Mensual', fl('Mes (fecha de respuesta)', A.porMes), [16,11,9,10,8,10,10,8]);
   add('Notas', [['Definiciones'], ['Resueltas: aprobadas, aprobadas con propuesta, devueltas y rechazadas con fecha de respuesta en el período.'],
     ['Tiempo: columna Horas_Habiles de la SÁBANA_MAESTRA (horas hábiles, sin fines de semana ni feriados).'], ['Dentro de '+r.limites.h1+' h: tiempo ≤ '+r.limites.h1+' horas hábiles.'],
-    ['Solo cifras agregadas: no contiene RUT ni identificadores de operación.']].concat((r.avisos||[]).map(function(a){ return ['Aviso: '+a]; })), [110]);
+    ['Cumplimiento combinado: (MHE dentro de plazo + Pie y Leasing completadas) / (MHE resueltas + Pie y Leasing completadas). Pie y Leasing no se miden desde la sábana: se asumen al 100% (igual que el reporte semanal).'], ['Solo cifras agregadas: no contiene RUT ni identificadores de operación.']].concat((r.avisos||[]).map(function(a){ return ['Aviso: '+a]; })), [110]);
   XLSX.writeFile(wb, 'SLA_Resueltas_' + r.periodo.desde + '_a_' + r.periodo.hasta + '.xlsx');
 }
 
