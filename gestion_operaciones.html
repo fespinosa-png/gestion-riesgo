@@ -2346,7 +2346,7 @@ async function proponerAsignacionMHE(){
     _asig.prep = asigPreparar(_asig.ops, Date.now());
     _asig.previos = {};
     _asig.reasignar = {};
-    dayOps.forEach(function(o){ if(o.analista) _asig.previos[o.analista] = (_asig.previos[o.analista] || 0) + 1; });
+    dayOps.forEach(function(o){ if(o.analista && !o._forzada) _asig.previos[o.analista] = (_asig.previos[o.analista] || 0) + 1; });
     asigMostrar();
   }catch(e){
     if(est){ est.style.color = '#C0392B'; est.textContent = 'No se pudo leer el tubo: ' + e.message; }
@@ -2462,6 +2462,139 @@ function asigExcel(){
   XLSX.utils.book_append_sheet(wb, ws, 'Propuesta');
   XLSX.writeFile(wb, 'Propuesta_asignacion_MHE_' + new Date().toISOString().slice(0, 10) + '.xlsx');
 }
+
+// ─── ASIGNAR URGENCIAS QUE NO ESTÁN ASIGNADAS (extensión de «Verificar urgencias») ───────────────────────────
+// Para las urgencias del correo que no están en el reparto: se busca cada RUT en el tubo de la sábana y se propone un analista.
+// (1) Si la sábana ya la tiene con un analista del equipo, se carga con él. (2) Reingreso: vuelve a su analista anterior. (3) El resto, al analista del
+// producto con cupo libre (más antigua primero). (4) Sin cupo, o no encontrada en el tubo: «forzada» → la asignas tú a los analistas que elijas.
+// Las forzadas quedan como adicionales (_forzada) y NO consumen el cupo del día. Todas entran como urgentes; si superan el SLA, como vencidas.
+var _urgA = {rows:[], forz:{}, prod:'pv', ids:{}};
+function urgAsigNombres(){ return TEAM.filter(function(t){ return !t.products.includes('brasil') && availability[t.name]; }).map(function(t){ return t.name; }); }
+function urgAsigPreparar(rutsSin, tubo, prodSel, ahoraMs){
+  const porRut = {};
+  (tubo || []).forEach(function(o){ const k = asigRut(o.rut); if(k){ (porRut[k] = porRut[k] || []).push(o); } });
+  const enRepartoId = {}; dayOps.forEach(function(o){ if(o._id_operacion) enRepartoId[String(o._id_operacion)] = 1; });
+  const rows = [];
+  rutsSin.forEach(function(e){
+    const k = asigRut(e.tok.raw), lst = (porRut[k] || []).filter(function(o){ return !enRepartoId[String(o.id_operacion)]; });
+    if(!lst.length){
+      rows.push({rut:e.tok.raw, op:null, seg:prodSel, h:null, tipo:'notubo', sab:'No está en el tubo (puede estar ya resuelta o no haber llegado aún)', ant:null, agregar:false});
+      return;
+    }
+    lst.forEach(function(o){
+      const sn = asigNorm(o.segmento), seg = sn.indexOf('primeravivienda') >= 0 ? 'pv' : (sn.indexOf('subsidio') >= 0 ? 'subsidio' : prodSel);
+      const actual = asigResolver(o.analista_actual), generico = asigEsGenerico(o.analista_actual);
+      const r = {rut:e.tok.raw, op:o, seg:seg, h:slaTuboHoras(o, ahoraMs), ant:asigResolver(o.analista_anterior), agregar:true};
+      if(seg !== prodSel && (sn.indexOf('primeravivienda') >= 0 || sn.indexOf('subsidio') >= 0)) r.aviso = 'En la sábana figura como ' + (seg === 'pv' ? 'Primera Vivienda' : 'Subsidio') + ' (elegiste ' + (prodSel === 'pv' ? 'PV' : 'Subsidio') + ')';
+      if(actual){ r.tipo = 'fija'; r.fija = actual; r.sab = 'Ya asignada en la sábana a ' + actual; }
+      else if(!generico){ r.tipo = 'noreconocido'; r.sab = 'Analista de la sábana fuera del equipo: ' + String(o.analista_actual).trim(); }
+      else { r.tipo = 'generica'; r.sab = 'Sin analista' + (r.ant ? ' · reingreso (antes: ' + r.ant + ')' : ''); }
+      rows.push(r);
+    });
+  });
+  return rows;
+}
+// Calcula analista/motivo de cada fila. Pura salvo lectura de TEAM, availability, CAPS, dayType.
+function urgAsigCalcular(rows, forzSel){
+  let cap = CAPS[dayType]; if(typeof cap !== 'number' || isNaN(cap)) cap = 21;
+  const carga = {}; dayOps.forEach(function(o){ if(o.analista && !o._forzada) carga[o.analista] = (carga[o.analista] || 0) + 1; });
+  const c = function(n){ return carga[n] || 0; };
+  rows.forEach(function(r){ r.analista = ''; r.motivo = ''; r.forzada = false; });
+  const pend = [];
+  rows.forEach(function(r){
+    if(r.manual){ r.forzada = c(r.manual) >= cap; carga[r.manual] = c(r.manual) + 1; r.analista = r.manual; r.motivo = 'Elegido por ti' + (r.forzada ? ' · sobre el cupo (adicional)' : ''); }
+  });
+  rows.forEach(function(r){
+    if(r.analista) return;
+    if(r.tipo === 'fija'){ r.analista = r.fija; carga[r.fija] = c(r.fija) + 1; r.motivo = r.sab; }
+  });
+  const cand = rows.filter(function(r){ return !r.analista && r.tipo === 'generica'; }).map(function(r){ return {op:r.op, seg:r.seg, h:r.h, ant:r.ant, reingreso:!!r.ant, row:r}; });
+  if(cand.length){
+    const prev = {}; Object.keys(carga).forEach(function(k){ prev[k] = carga[k]; });
+    const R = asigAsignar(cand, prev);
+    R.filas.forEach(function(f){ const r = f.c.row; if(f.analista){ r.analista = f.analista; r.motivo = f.motivo; carga[f.analista] = c(f.analista) + 1; } });
+  }
+  const forzNames = urgAsigNombres().filter(function(n){ return forzSel[n]; });
+  const sinCupo = rows.filter(function(r){ return !r.analista; }).sort(function(a, b){ return (b.h === null ? -1 : b.h) - (a.h === null ? -1 : a.h); });
+  sinCupo.forEach(function(r){
+    if(r.tipo === 'noreconocido' && !forzNames.length){ r.motivo = 'Elige analista (el de la sábana no está en el equipo)'; return; }
+    if(!forzNames.length){ r.motivo = r.tipo === 'notubo' ? 'No encontrada · elige analista para agregarla' : 'Sin cupo · elige a quién forzarla'; return; }
+    const n = forzNames.slice().sort(function(a, b){ return c(a) - c(b) || a.localeCompare(b); })[0];
+    r.analista = n; r.forzada = true; carga[n] = c(n) + 1;
+    r.motivo = (r.tipo === 'notubo' ? 'No está en el tubo' : (r.tipo === 'noreconocido' ? 'Analista de la sábana fuera del equipo' : 'Sin cupo')) + ' · forzada (adicional) a ' + n;
+  });
+  return {cap:cap, carga:carga};
+}
+async function urgAsigAbrir(){
+  const box = document.getElementById('urg-asignar'); if(!box) return;
+  box.innerHTML = '<div style="font-size:12px;color:var(--gray-text);">⏳ Leyendo el tubo de la sábana…</div>';
+  try{
+    const r = await gsCall('getSLATubo', {});
+    if(!r || r.error) throw new Error((r && r.error) || 'Sin respuesta del servidor');
+    const sel = (document.getElementById('urg-producto') || {}).value || 'pv';
+    _urgA.prod = sel; _urgA.forz = _urgA.forz || {};
+    _urgA.rows = urgAsigPreparar(window._urgRutsSin || [], r.ops || [], sel, Date.now());
+    urgAsigRender();
+  }catch(e){ box.innerHTML = '<div style="font-size:12px;color:#C0392B;">No se pudo leer el tubo: ' + _urgEsc(e.message || String(e)) + '</div>'; }
+}
+function urgAsigRender(){
+  const box = document.getElementById('urg-asignar'); if(!box) return;
+  const rows = _urgA.rows, res = urgAsigCalcular(rows, _urgA.forz), nombres = urgAsigNombres();
+  rows.sort(function(a, b){ return (b.h === null ? -1 : b.h) - (a.h === null ? -1 : a.h); });
+  const E = _urgEsc;
+  const opts = function(v){ return '<option value="">—</option>' + nombres.map(function(n){ return '<option value="' + E(n) + '"' + (v === n ? ' selected' : '') + '>' + E(n) + '</option>'; }).join(''); };
+  let h = '<div style="border:1px solid var(--gray-line);border-radius:10px;padding:10px 12px;margin-top:8px;background:#FAFBFD;">'
+    + '<div style="font-weight:700;font-size:13px;color:var(--navy);margin-bottom:4px;">🚑 Asignar urgencias sin asignar</div>'
+    + '<div style="font-size:11px;color:var(--gray-text);margin-bottom:6px;">Las que tienen cupo van a su analista; las <b>forzadas</b> (sin cupo o no encontradas) se reparten entre los analistas que marques abajo, o elige uno por fila. Las forzadas son adicionales: no consumen el cupo (' + res.cap + ' por analista).</div>'
+    + '<div style="font-size:12px;margin-bottom:8px;"><b>Analistas para forzadas:</b> ' + nombres.map(function(n){ return '<label style="margin-right:10px;white-space:nowrap;"><input type="checkbox" data-n="' + E(n) + '" ' + (_urgA.forz[n] ? 'checked ' : '') + 'onchange="_urgA.forz[this.getAttribute(\'data-n\')]=this.checked;urgAsigRender()"> ' + E(n) + ' <span style="color:var(--gray-text);">(' + (res.carga[n] || 0) + ')</span></label>'; }).join('') + '</div>';
+  h += '<div style="overflow:auto;max-height:36vh;border:1px solid #E5E9EF;border-radius:8px;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><tr style="background:#F4F6F9;text-align:left;"><th style="padding:4px 8px;">✓</th><th>RUT</th><th>Producto</th><th>Horas háb.</th><th>Analista</th><th>Detalle</th></tr>';
+  rows.forEach(function(r, i){
+    const est = r.h === null ? 'plazo' : slaTuboEstado(r.h);
+    h += '<tr style="border-top:1px solid #EEF1F4;' + (r.forzada ? 'background:#FFF6E5;' : '') + '"><td style="padding:4px 8px;"><input type="checkbox" ' + (r.agregar && r.analista ? 'checked ' : '') + (r.analista && r.seg ? '' : 'disabled ') + 'onchange="_urgA.rows[' + i + '].agregar=this.checked"></td>'
+      + '<td>' + E(r.rut) + '</td><td>' + (r.seg === 'pv' ? 'PV' : r.seg === 'subsidio' ? 'Subsidio' : '—') + '</td>'
+      + '<td style="font-weight:700;color:' + SLA_COL[est] + ';">' + (r.h === null ? '—' : r.h.toFixed(1)) + '</td>'
+      + '<td><select onchange="_urgA.rows[' + i + '].manual=this.value;_urgA.rows[' + i + '].agregar=!!this.value||_urgA.rows[' + i + '].agregar;urgAsigRender()" style="font-size:12px;padding:2px 4px;border:1px solid var(--gray-line);border-radius:6px;">' + opts(r.analista) + '</select></td>'
+      + '<td style="color:var(--gray-text);">' + E(r.motivo || r.sab) + (r.tipo !== 'generica' && r.motivo !== r.sab && r.sab ? ' · ' + E(r.sab) : '') + (r.aviso ? '<div style="color:#BA7517;">⚠ ' + E(r.aviso) + '</div>' : '') + '</td></tr>';
+  });
+  h += '</table></div>';
+  const nAdd = rows.filter(function(r){ return r.agregar && r.analista && r.seg; }).length, nF = rows.filter(function(r){ return r.agregar && r.analista && r.seg && r.forzada; }).length;
+  h += '<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><button onclick="urgAsigAgregar()" ' + (nAdd ? '' : 'disabled ') + 'style="padding:7px 14px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:700;cursor:pointer;' + (nAdd ? '' : 'opacity:.5;') + '">➕ Agregar ' + nAdd + ' al reparto de hoy como urgentes</button>'
+    + '<span style="font-size:12px;color:var(--gray-text);">' + nF + ' forzadas (adicionales)</span></div></div>';
+  box.innerHTML = h;
+}
+function urgAsigAgregar(){
+  if(!_urgPuedeEditar()){ alert('Solo el Jefe de Riesgo puede agregar urgencias al reparto.'); return; }
+  urgAsigCalcular(_urgA.rows, _urgA.forz);
+  const filas = _urgA.rows.filter(function(r){ return r.agregar && r.analista && r.seg; });
+  if(!filas.length){ alert('No hay urgencias para agregar.'); return; }
+  const ya = {}; dayOps.forEach(function(o){ if(o._id_operacion) ya['i:' + o._id_operacion] = 1; const k = asigRut(o.identificador); if(k) ya['r:' + k] = 1; });
+  const nuevas = filas.filter(function(r){ return !(r.op && ya['i:' + r.op.id_operacion]) && !ya['r:' + asigRut(r.rut)]; });
+  if(!nuevas.length){ alert('Todas ya están en el reparto de hoy.'); return; }
+  const nF = nuevas.filter(function(r){ return r.forzada; }).length;
+  if(!window.confirm('Se agregarán ' + nuevas.length + ' urgencias al reparto de hoy (' + nF + ' forzadas como adicionales).\nQuedan marcadas como ⚡ urgentes; si superan el SLA, como 🔴 vencidas.\n\n¿Continuar?')) return;
+  const ahora = Date.now(), ahoraIso = new Date().toISOString();
+  nuevas.forEach(function(r){
+    const o = r.op, p = PRODUCTS.find(function(x){ return x.key === r.seg; });
+    const op = {
+      uid: uid(), productKey: r.seg, productName: p ? p.name : r.seg,
+      identificador: o ? o.rut : r.rut, analista: r.analista, estado: 'PENDIENTE', tier: 'urgente',
+      fecha_riesgo: o && o.fecha_envio ? String(o.fecha_envio).slice(0, 10) : currentDate, _fecha_envio: o ? (o.fecha_envio || '') : '',
+      obs: (o ? 'ID Op: ' + o.id_operacion + ' | Horas hab: ' + (r.h === null ? '—' : r.h.toFixed(1)) + ' | ' : 'Sin datos de sábana | ') + 'Urgencia solicitada' + (r.forzada ? ' | Adicional forzada' : ''), obs_seguimiento: '',
+      asignado_en: ahoraIso, completado_en: null,
+      _id_operacion: o ? o.id_operacion : '', _horas_habiles: r.h === null ? 0 : r.h, _categoria_sla: o ? (o.categoria_sla || 'Inmediata') : 'Inmediata',
+      _derivar_ivan: !!(o && o.derivar_ivan), _resolucion_ia: o ? (o.resolucion_ia || '') : '', _resolucion_agente: o ? (o.resolucion_agente || '') : '', _needs_review: false,
+      _urgencia_solicitada: true, _forzada: !!r.forzada
+    };
+    if(o) slaAplicarConsultaAOp(op, {encontrado:true, estado:'pendiente', segmento:o.segmento, fecha_envio:o.fecha_envio, categoria_sla:o.categoria_sla,
+      id_operacion:o.id_operacion, horas_sabana:o.horas_sabana, duplicada_pendiente:false, n_pendientes:1}, ahora);
+    if(op.tier === 'normal') op.tier = 'urgente';
+    dayOps.push(op);
+  });
+  saveDraft(); buildOpsEntry(); updateDraftBadge();
+  alert('Se agregaron ' + nuevas.length + ' urgencias al reparto de hoy (' + nF + ' forzadas). Revisa la asignación y confirma el reparto.');
+  try{ verificarUrgencias(); }catch(e){}
+}
+// ─── FIN ASIGNAR URGENCIAS ───
 
 // ─── CONSULTA DE SLA POR RUT / ID ───────────────────────────────────────────────────────────
 // El gestor pregunta al Apps Script (acción getSLAPorIdentificadores) por una lista de RUT o IDs de operación y recibe,
@@ -4541,6 +4674,7 @@ function abrirVerificadorUrgencias(){
     + '<button onclick="cerrarVerificadorUrgencias()" style="border:none;background:transparent;font-size:18px;cursor:pointer;color:var(--gray-text);">✕</button></div>'
     + '<div style="font-size:12px;color:var(--gray-text);margin-bottom:10px;">Pega el texto del correo. Detecto los RUT/CPF e IDs y te digo cuáles están asignadas. El texto se procesa solo en tu navegador y no se guarda.</div>'
     + '<textarea id="urg-texto" rows="7" placeholder="Pega aquí el correo de urgencias..." style="width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--gray-line);border-radius:8px;font-size:13px;font-family:inherit;resize:vertical;"></textarea>'
+    + '<div style="margin-top:8px;font-size:12px;color:var(--gray-text);">Producto del correo (para las urgencias que no estén en el tubo): <select id="urg-producto" style="font-size:12px;padding:3px 6px;border:1px solid var(--gray-line);border-radius:6px;"><option value="pv">Primera Vivienda</option><option value="subsidio">Subsidio</option></select></div>'
     + '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">'
     + '<button onclick="verificarUrgencias()" style="padding:8px 18px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-size:13px;font-weight:700;cursor:pointer;">Verificar</button>'
     + '<button onclick="document.getElementById(\'urg-texto\').value=\'\';document.getElementById(\'urg-resultado\').innerHTML=\'\';window._urgResumenTxt=\'\';" style="padding:8px 14px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;font-size:13px;cursor:pointer;">Limpiar</button>'
@@ -4643,6 +4777,8 @@ async function verificarUrgencias(){
     html += '<details style="margin-top:6px;"><summary style="font-size:11px;color:var(--gray-text);cursor:pointer;">'+numsSin.length+' número(s) del correo sin coincidencia (pueden ser IDs sin asignar u otros datos)</summary>'
       + '<div style="font-size:11px;color:var(--gray-text);padding:6px 0;">'+numsSin.map(function(e){ return _urgEsc(e.tok.raw); }).join(' · ')+'</div></details>';
   }
+  window._urgRutsSin = rutsSin;
+  if(rutsSin.length && _urgPuedeEditar()) html += '<div id="urg-asignar" style="margin-top:8px;"><button onclick="urgAsigAbrir()" style="padding:7px 14px;border:1px solid #BA7517;border-radius:8px;background:#fff;color:#BA7517;font-size:12px;font-weight:700;cursor:pointer;">🚑 Asignar las ' + rutsSin.length + ' sin asignar…</button></div>';
   html += '<div style="margin-top:10px;"><button onclick="copiarResumenUrgencias()" style="padding:6px 14px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-size:12px;font-weight:600;cursor:pointer;">📋 Copiar resumen</button></div>';
   window._urgResumenTxt = lineas.join('\n');
   out.innerHTML = html;
