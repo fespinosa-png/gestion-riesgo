@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>🧪 PRUEBA — Gestión de Operaciones</title>
+<title>Gestión de Operaciones -- Riesgo Originación</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap');
 :root{
@@ -212,11 +212,6 @@ tr:last-child td{border-bottom:none;}
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
 </head>
 <body>
-<div id="banner-prueba" style="position:sticky;top:0;z-index:99999;background:#C0392B;color:#fff;padding:8px 14px;font:700 13px/1.3 sans-serif;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
-  <span>🧪 VERSIÓN DE PRUEBA — los datos se guardan en una zona aparte (gestion_test) y no afectan al equipo ni a la hoja real. La sábana se lee en modo solo lectura.</span>
-  <button onclick="copiarProduccionAPrueba()" style="padding:4px 10px;border:1px solid #fff;border-radius:6px;background:transparent;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">⬇ Copiar datos reales a la prueba</button>
-  <button onclick="vaciarZonaPrueba()" style="padding:4px 10px;border:1px solid #fff;border-radius:6px;background:transparent;color:#fff;font-size:12px;font-weight:700;cursor:pointer;">🗑 Vaciar zona de prueba</button>
-</div>
 
 <!-- TOP NAV -->
 <div class="topbar">
@@ -1154,54 +1149,6 @@ function handleRequest(params) {
 </div>
 
 <script>
-// ═══ VERSIÓN DE PRUEBA (generada automáticamente desde gestion_operaciones.html) ═══════════════
-// 1) Aísla el almacenamiento local: esta página usa claves propias y no toca las del gestor real.
-(function(){
-  var P = 'PRUEBA:', Sp = Storage.prototype, g = Sp.getItem, s = Sp.setItem, r = Sp.removeItem;
-  Sp.getItem = function(k){ return g.call(this, P + k); };
-  Sp.setItem = function(k, v){ return s.call(this, P + k, v); };
-  Sp.removeItem = function(k){ return r.call(this, P + k); };
-})();
-// 2) Copia de datos reales → zona de prueba (solo LEE producción; solo ESCRIBE en gestion_test)
-var _PROD_URL = 'https://asignador-de-operaciones-default-rtdb.firebaseio.com/gestion';
-function _sesionPrueba(){
-  if(typeof _fbUser === 'undefined' || !_fbUser){
-    alert('Primero ingresa con tu cuenta Creditú (pantalla azul "Ingresar con cuenta Creditú").\nSin sesión, Firebase rechaza las escrituras con error 401.');
-    return false;
-  }
-  return true;
-}
-async function _fbRaizPrueba(metodo, valor){
-  if(!/\/gestion_test$/.test(FB_BASE)) throw new Error('Protección: FB_BASE no apunta a la zona de prueba. No se escribió nada.');
-  if(typeof _fbUser === 'undefined' || !_fbUser) throw new Error('No has ingresado con tu cuenta Creditú.');
-  const token = await fbToken();
-  const r = await fetch(FB_BASE + '.json' + (token ? '?auth=' + token : ''), {method:metodo, body:JSON.stringify(valor), headers:{'Content-Type':'application/json'}});
-  if(!r.ok) throw new Error(r.status === 401 ? 'Firebase rechazó la escritura (401). Si ya ingresaste, las reglas de Firebase no permiten escribir en gestion_test.' : 'Firebase error ' + r.status);
-}
-async function copiarProduccionAPrueba(){
-  if(!/\/gestion_test$/.test(FB_BASE)){ alert('Protección: esta página no apunta a la zona de prueba. No se hizo nada.'); return; }
-  if(!_sesionPrueba()) return;
-  if(!confirm('Se REEMPLAZARÁ todo lo que haya en la zona de prueba con una copia de los datos reales.\nLos datos reales NO se modifican (solo se leen).\n\n¿Continuar?')) return;
-  try{
-    const tokenLectura = await fbToken();
-    const r = await fetch(_PROD_URL + '.json' + (tokenLectura ? '?auth=' + tokenLectura : ''));   // lectura de producción con tu sesión
-    if(!r.ok) throw new Error('No se pudo leer producción: ' + r.status);
-    const data = await r.json();
-    if(!data || typeof data !== 'object') throw new Error('Producción devolvió contenido vacío');
-    await _fbRaizPrueba('PUT', data);
-    alert('Copia lista. Se recargará la página.');
-    location.reload();
-  }catch(e){ alert('Error al copiar: ' + e.message); }
-}
-async function vaciarZonaPrueba(){
-  if(!/\/gestion_test$/.test(FB_BASE)){ alert('Protección: esta página no apunta a la zona de prueba. No se hizo nada.'); return; }
-  if(!_sesionPrueba()) return;
-  if(!confirm('Se BORRARÁ todo lo que haya en la zona de prueba.\nLos datos reales no se tocan.\n\n¿Continuar?')) return;
-  try{ await _fbRaizPrueba('PUT', null); alert('Zona de prueba vaciada. Se recargará la página.'); location.reload(); }
-  catch(e){ alert('Error al vaciar: ' + e.message); }
-}
-// ═══════════════════════════════════════════════════════════════════════════════════════════
-
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 var PRODUCTS = [
   {key:'leasing',  name:'Leasing Habitacional', idType:'ID',  slaH:24, priority:1, dflt:13},
@@ -1502,7 +1449,7 @@ async function signInWithGoogle(){
 }
 
 // ── Firebase Realtime Database ────────────────────────────────────────────
-const FB_BASE = 'https://asignador-de-operaciones-default-rtdb.firebaseio.com/gestion_test';   // PRUEBA: zona aparte
+const FB_BASE = 'https://asignador-de-operaciones-default-rtdb.firebaseio.com/gestion';
 
 async function fbToken(){
   if(!_fbUser) return '';
@@ -1539,11 +1486,6 @@ async function fbPing(){
 const GS_MHE_URL = 'https://script.google.com/macros/s/AKfycbwq97TBEzQRJOBB03L2FUt96vVzInP0ZCltpNospZY9ynOZCP_ALRG1UnMNhJ-dMtNc/exec';
 
 async function gsCall(action, params, _retry){
-  // PRUEBA: el Apps Script solo se usa para LEER (sábana). Toda acción que escriba se simula y no sale de este navegador.
-  if(['set','setOps','setMeta','markEstado','updateField','logRows','autoMigrate'].indexOf(action) >= 0){
-    console.warn('[PRUEBA] escritura al Apps Script bloqueada:', action);
-    return {success:true, simulado:true};
-  }
   const idToken = await fbToken();   // identifica al usuario ante el script, que lo verifica con Firebase
   const payload = JSON.stringify({action, ...params, idToken});
   _retry = _retry || 0;
