@@ -1435,11 +1435,20 @@ function initFirebaseAuth(){
 
 // Al abrir la página, el equipo se lee ANTES de que Firebase confirme la sesión (esa lectura sale sin token).
 // Con la lectura pública cerrada fallaría y se usaría el equipo por defecto: por eso se recarga apenas hay sesión.
+var _planPostLoginHecho = false;
 async function _fbPostLogin(user){
   try{
     await loadTeamFromGS();
     renderEquipo(); initUserSelect(); updateCapLabels();
   }catch(e){ console.log('No se pudo recargar el equipo tras iniciar sesión:', e); }
+  // La planificación del día también se leyó antes de la sesión (sin token): se vuelve a leer ahora,
+  // salvo que ya haya una guardada en este navegador, para no mostrar ni confirmar los valores por defecto.
+  try{
+    if(!_planPostLoginHecho){
+      _planPostLoginHecho = true;
+      if(!localStorage.getItem('plan:'+currentDate) && typeof cambiarFechaPlan === 'function') await cambiarFechaPlan(currentDate);
+    }
+  }catch(e){ console.log('No se pudo recargar la planificación tras iniciar sesión:', e); }
   try{
     if(!currentUser){
       const match = matchGoogleEmailToTeam(user.email);
@@ -2136,6 +2145,41 @@ function slaDeltaHTML(a, b, nAnt, u, mejorBajo, neutro){
 }
 function slaColPct(p){ return p >= 80 ? '#27AE60' : (p >= 50 ? '#BA7517' : '#C0392B'); }
 
+// ─── SLA COMBINADO: MHE (sábana) + Pie Hipotecario + Leasing Habitacional (gestor, declarado al 100%) ───────────
+// Pie y Leasing no se miden desde la sábana: igual que en el reporte semanal, se asume 100% de cumplimiento sobre lo completado (estado Hecho en el gestor).
+async function slaCombinadoCompletar(r){
+  const el = document.getElementById('sla-comb-card');
+  if(!el) return;
+  const S = r.actual.resumen;
+  const dias = [];
+  for(let d = new Date(r.periodo.desde + 'T12:00:00'), fin = new Date(r.periodo.hasta + 'T12:00:00'); d <= fin && dias.length < 120; d.setDate(d.getDate() + 1)){
+    const dow = d.getDay(); if(dow === 0 || dow === 6) continue;
+    dias.push(d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2));
+  }
+  let leasing = 0, pie = 0, fallidos = 0;
+  try{
+    for(let i = 0; i < dias.length; i += 8){
+      await Promise.all(dias.slice(i, i + 8).map(async function(date){
+        try{
+          const data = await fbGet('ops/' + date);
+          const ops = !data ? [] : (typeof data === 'string' ? JSON.parse(data) : (Array.isArray(data) ? data : []));
+          ops.forEach(function(op){ if(op && op.estado === 'HECHO'){ if(op.productKey === 'leasing') leasing++; else if(op.productKey === 'pie') pie++; } });
+        }catch(e){ fallidos++; }
+      }));
+    }
+    const pl = leasing + pie, dentro = S.dentro48 || 0, n = S.n || 0;
+    const pct = (n + pl) ? (dentro + pl) / (n + pl) * 100 : 0;
+    const p1 = Math.round(pct * 10) / 10;
+    el.querySelector('.v').textContent = p1.toFixed(1) + '%';
+    el.querySelector('.v').style.color = slaColMeta(p1);
+    el.querySelector('.s').innerHTML = slaMetaSub(p1) + '<div style="font-size:10px;color:var(--gray-text);margin-top:2px;">MHE ' + dentro + ' de ' + n + ' dentro de plazo + Pie ' + pie + ' + Leasing ' + leasing + ' (al 100%)' + (fallidos ? ' · ⚠ ' + fallidos + ' día(s) sin leer' : '') + '</div>';
+    window._slaComb = {pct: p1, dentro: dentro, n: n, pie: pie, leasing: leasing, desde: r.periodo.desde, hasta: r.periodo.hasta};
+  }catch(e){
+    el.querySelector('.v').textContent = '—';
+    el.querySelector('.s').innerHTML = '<div style="font-size:10px;color:#C0392B;">No se pudo calcular: ' + _urgEsc(e.message || String(e)) + '</div>';
+  }
+}
+
 function slaResHTML(r){
   const A = r.actual, S = A.resumen, P = r.anterior.resumen, E = _urgEsc;
   const nm = function(x){ return (x === undefined || x === null) ? 0 : x; };
@@ -2151,6 +2195,7 @@ function slaResHTML(r){
     + card(S.total, 'Resueltas', slaDeltaHTML(S.total, nm(P.total), nm(P.total), '', false, true))
     + card(S.prom.toFixed(1), 'SLA promedio (h hábiles)', slaDeltaHTML(S.prom, P.prom, P.n, ' h', true))
     + card(S.pct48.toFixed(1)+'%', 'Cumplimiento SLA MHE (≤ '+r.limites.h1+' h) · meta '+SLA_META+'%', slaMetaSub(S.pct48) + slaDeltaHTML(S.pct48, P.pct48, P.n, ' pp', false), slaColMeta(S.pct48))
+    + '<div id="sla-comb-card" style="flex:1;min-width:170px;background:#F4F7FA;border:1px solid var(--gray-line);border-radius:10px;padding:12px;text-align:center;"><div class="v" style="font-size:24px;font-weight:800;color:var(--navy);">…</div><div style="font-size:11px;color:var(--gray-text);">Cumplimiento combinado MHE + Pie + Leasing (Pie y Leasing al 100%)</div><div class="s"></div></div>'
     + card(S.pct24.toFixed(1)+'%', 'Dentro de '+r.limites.h2+' h', slaDeltaHTML(S.pct24, P.pct24, P.n, ' pp', false))
     + card(S.mediana.toFixed(1), 'Mediana (h)', slaDeltaHTML(S.mediana, P.mediana, P.n, ' h', true))
     + card(Number(S.p90).toFixed(1), 'P90 (h): el 90% se resolvió en menos', slaDeltaHTML(S.p90, P.p90, P.n, ' h', true))
@@ -2218,6 +2263,7 @@ async function slaResConsultar(){
     }
     window._slaRes = {r:r, cargadoEn:Date.now()};
     if(body) body.innerHTML = slaResHTML(r);
+    slaCombinadoCompletar(r);
     if(est) est.textContent = 'Sábana consultada a las ' + new Date().toLocaleTimeString('es-CL', {hour:'2-digit', minute:'2-digit'});
   }catch(e){
     if(body) body.innerHTML = '<div style="padding:14px;border:1px solid #F5C6CB;background:#FFF5F5;border-radius:8px;font-size:13px;color:#C0392B;">No hubo respuesta del Apps Script: '+_urgEsc(e.message)+'</div>';
@@ -2237,9 +2283,17 @@ function exportSLAResExcel(){
     ['SLA DE OPERACIONES RESUELTAS — SÁBANA_MAESTRA'], ['Período (por fecha de respuesta):', slaFmtRango(r.periodo)], ['Período anterior:', slaFmtRango(r.anterior.periodo)], ['Consultado:', new Date(d.cargadoEn).toLocaleString('es-CL')], [],
     ['Indicador','Período','Anterior'],
     ['Resueltas', S.total, P.total], ['Con horas hábiles', S.n, P.n], ['SLA promedio (h hábiles)', S.prom, P.prom], ['Mediana (h)', S.mediana, P.mediana], ['P90 (h)', S.p90, P.p90],
-    ['Cumplimiento SLA MHE: % dentro de '+r.limites.h1+' h (meta '+SLA_META+'%)', S.pct48, P.pct48], ['% dentro de '+r.limites.h2+' h', S.pct24, P.pct24], [],
+    ['Cumplimiento SLA MHE: % dentro de '+r.limites.h1+' h (meta '+SLA_META+'%)', S.pct48, P.pct48], ['% dentro de '+r.limites.h2+' h', S.pct24, P.pct24]
+  ].concat((function(){
+    const C = window._slaComb;
+    if(C && C.desde === r.periodo.desde && C.hasta === r.periodo.hasta){
+      return [['Pie Hipotecario completadas (gestor, estado Hecho)', C.pie], ['Leasing Habitacional completadas (gestor, estado Hecho)', C.leasing],
+        ['Cumplimiento combinado MHE + Pie + Leasing (Pie y Leasing al 100%)', C.pct]];
+    }
+    return [['Cumplimiento combinado MHE + Pie + Leasing', 'no calculado (espera a que la tarjeta termine de cargar y vuelve a exportar)']];
+  })()).concat([[],
     ['Mezcla de resultados','Cantidad'], ['Aprobada 100%', A.resoluciones.aprobada], ['Aprobada con propuesta', A.resoluciones.propuesta], ['Devuelta a comercial', A.resoluciones.devuelta], ['Rechazada', A.resoluciones.rechazada]
-  ], [38,24,24]);
+  ]), [38,24,24]);
   const cab = ['Resueltas','Prom. h','Mediana h','P90 h','% ≤'+r.limites.h1+' h','% ≤'+r.limites.h2+' h','Máx. h'];
   const fl = function(titulo, grupos){ return [[titulo].concat(cab)].concat(grupos.map(function(g){ return [g.clave, g.n, g.prom, g.mediana, g.p90, g.pct48, g.pct24, g.max]; })); };
   add('Segmento y categoría', fl('Segmento · Categoría', A.porSegCat), [34,11,9,10,8,10,10,8]);
@@ -2249,7 +2303,7 @@ function exportSLAResExcel(){
   add('Mensual', fl('Mes (fecha de respuesta)', A.porMes), [16,11,9,10,8,10,10,8]);
   add('Notas', [['Definiciones'], ['Resueltas: aprobadas, aprobadas con propuesta, devueltas y rechazadas con fecha de respuesta en el período.'],
     ['Tiempo: columna Horas_Habiles de la SÁBANA_MAESTRA (horas hábiles, sin fines de semana ni feriados).'], ['Dentro de '+r.limites.h1+' h: tiempo ≤ '+r.limites.h1+' horas hábiles.'],
-    ['Solo cifras agregadas: no contiene RUT ni identificadores de operación.']].concat((r.avisos||[]).map(function(a){ return ['Aviso: '+a]; })), [110]);
+    ['Cumplimiento combinado: (MHE dentro de plazo + Pie y Leasing completadas) / (MHE resueltas + Pie y Leasing completadas). Pie y Leasing no se miden desde la sábana: se asumen al 100% (igual que el reporte semanal).'], ['Solo cifras agregadas: no contiene RUT ni identificadores de operación.']].concat((r.avisos||[]).map(function(a){ return ['Aviso: '+a]; })), [110]);
   XLSX.writeFile(wb, 'SLA_Resueltas_' + r.periodo.desde + '_a_' + r.periodo.hasta + '.xlsx');
 }
 
@@ -2350,7 +2404,7 @@ async function proponerAsignacionMHE(){
     _asig.prep = asigPreparar(_asig.ops, Date.now());
     _asig.previos = {};
     _asig.reasignar = {};
-    dayOps.forEach(function(o){ if(o.analista) _asig.previos[o.analista] = (_asig.previos[o.analista] || 0) + 1; });
+    dayOps.forEach(function(o){ if(o.analista && !o._forzada) _asig.previos[o.analista] = (_asig.previos[o.analista] || 0) + 1; });
     asigMostrar();
   }catch(e){
     if(est){ est.style.color = '#C0392B'; est.textContent = 'No se pudo leer el tubo: ' + e.message; }
@@ -2466,6 +2520,288 @@ function asigExcel(){
   XLSX.utils.book_append_sheet(wb, ws, 'Propuesta');
   XLSX.writeFile(wb, 'Propuesta_asignacion_MHE_' + new Date().toISOString().slice(0, 10) + '.xlsx');
 }
+
+// ─── ASIGNAR URGENCIAS QUE NO ESTÁN ASIGNADAS (extensión de «Verificar urgencias») ───────────────────────────
+// Para las urgencias del correo que no están en el reparto: se busca cada RUT en el tubo de la sábana y se propone un analista.
+// (1) Si la sábana ya la tiene con un analista del equipo, se carga con él. (2) Reingreso: vuelve a su analista anterior. (3) El resto, al analista del
+// producto con cupo libre (más antigua primero). (4) Sin cupo, o no encontrada en el tubo: «forzada» → la asignas tú a los analistas que elijas.
+// Las forzadas quedan como adicionales (_forzada) y NO consumen el cupo del día. Todas entran como urgentes; si superan el SLA, como vencidas.
+var _urgA = {rows:[], forz:{}, prod:'pv', ids:{}};
+// Todos los analistas del equipo (menos Brasil), estén o no disponibles hoy: para elegir a quién forzar una urgencia.
+function urgAsigNombres(){ return TEAM.filter(function(t){ return !t.products.includes('brasil'); }).map(function(t){ return t.name; }); }
+function urgAsigEtq(n){ return n + (availability[n] ? '' : ' (no disp.)'); }
+function urgAsigPreparar(rutsSin, tubo, prodSel, ahoraMs){
+  const porRut = {};
+  (tubo || []).forEach(function(o){ const k = asigRut(o.rut); if(k){ (porRut[k] = porRut[k] || []).push(o); } });
+  const enRepartoId = {}; dayOps.forEach(function(o){ if(o._id_operacion) enRepartoId[String(o._id_operacion)] = 1; });
+  const rows = [];
+  rutsSin.forEach(function(e){
+    const k = asigRut(e.tok.raw), lst = (porRut[k] || []).filter(function(o){ return !enRepartoId[String(o.id_operacion)]; });
+    if(!lst.length){
+      rows.push({rut:e.tok.raw, op:null, seg:prodSel, h:null, tipo:'notubo', sab:'No está en el tubo (puede estar ya resuelta o no haber llegado aún)', ant:null, agregar:false});
+      return;
+    }
+    lst.forEach(function(o){
+      const sn = asigNorm(o.segmento), seg = sn.indexOf('primeravivienda') >= 0 ? 'pv' : (sn.indexOf('subsidio') >= 0 ? 'subsidio' : prodSel);
+      const actual = asigResolver(o.analista_actual), generico = asigEsGenerico(o.analista_actual);
+      const r = {rut:e.tok.raw, op:o, seg:seg, h:slaTuboHoras(o, ahoraMs), ant:asigResolver(o.analista_anterior), agregar:true};
+      if(seg !== prodSel && (sn.indexOf('primeravivienda') >= 0 || sn.indexOf('subsidio') >= 0)) r.aviso = 'En la sábana figura como ' + (seg === 'pv' ? 'Primera Vivienda' : 'Subsidio') + ' (elegiste ' + (prodSel === 'pv' ? 'PV' : 'Subsidio') + ')';
+      if(actual){ r.tipo = 'fija'; r.fija = actual; r.sab = 'Ya asignada en la sábana a ' + actual; }
+      else if(!generico){ r.tipo = 'noreconocido'; r.sab = 'Analista de la sábana fuera del equipo: ' + String(o.analista_actual).trim(); }
+      else { r.tipo = 'generica'; r.sab = 'Sin analista' + (r.ant ? ' · reingreso (antes: ' + r.ant + ')' : ''); }
+      rows.push(r);
+    });
+  });
+  return rows;
+}
+// Calcula analista/motivo de cada fila. Pura salvo lectura de TEAM, availability, CAPS, dayType.
+function urgAsigCalcular(rows, forzSel){
+  let cap = CAPS[dayType]; if(typeof cap !== 'number' || isNaN(cap)) cap = 21;
+  const carga = {}; dayOps.forEach(function(o){ if(o.analista && !o._forzada) carga[o.analista] = (carga[o.analista] || 0) + 1; });
+  const c = function(n){ return carga[n] || 0; };
+  rows.forEach(function(r){ r.analista = ''; r.motivo = ''; r.forzada = false; });
+  const pend = [];
+  rows.forEach(function(r){
+    if(r.manual){ r.forzada = c(r.manual) >= cap; carga[r.manual] = c(r.manual) + 1; r.analista = r.manual; r.motivo = 'Elegido por ti' + (r.forzada ? ' · sobre el cupo (adicional)' : ''); }
+  });
+  rows.forEach(function(r){
+    if(r.analista) return;
+    if(r.tipo === 'fija'){ r.analista = r.fija; carga[r.fija] = c(r.fija) + 1; r.motivo = r.sab; }
+  });
+  const cand = rows.filter(function(r){ return !r.analista && r.tipo === 'generica'; }).map(function(r){ return {op:r.op, seg:r.seg, h:r.h, ant:r.ant, reingreso:!!r.ant, row:r}; });
+  if(cand.length){
+    const prev = {}; Object.keys(carga).forEach(function(k){ prev[k] = carga[k]; });
+    const R = asigAsignar(cand, prev);
+    R.filas.forEach(function(f){ const r = f.c.row; if(f.analista){ r.analista = f.analista; r.motivo = f.motivo; carga[f.analista] = c(f.analista) + 1; } });
+  }
+  const forzNames = urgAsigNombres().filter(function(n){ return forzSel[n]; });
+  const sinCupo = rows.filter(function(r){ return !r.analista; }).sort(function(a, b){ return (b.h === null ? -1 : b.h) - (a.h === null ? -1 : a.h); });
+  sinCupo.forEach(function(r){
+    if(r.tipo === 'noreconocido' && !forzNames.length){ r.motivo = 'Elige analista (el de la sábana no está en el equipo)'; return; }
+    if(!forzNames.length){ r.motivo = r.tipo === 'notubo' ? 'No encontrada · elige analista para agregarla' : 'Sin cupo · elige a quién forzarla'; return; }
+    const n = forzNames.slice().sort(function(a, b){ return c(a) - c(b) || a.localeCompare(b); })[0];
+    r.analista = n; r.forzada = true; carga[n] = c(n) + 1;
+    r.motivo = (r.tipo === 'notubo' ? 'No está en el tubo' : (r.tipo === 'noreconocido' ? 'Analista de la sábana fuera del equipo' : 'Sin cupo')) + ' · forzada (adicional) a ' + n;
+  });
+  return {cap:cap, carga:carga};
+}
+async function urgAsigAbrir(){
+  const box = document.getElementById('urg-asignar'); if(!box) return;
+  box.innerHTML = '<div style="font-size:12px;color:var(--gray-text);">⏳ Leyendo el tubo de la sábana…</div>';
+  try{
+    const r = await gsCall('getSLATubo', {});
+    if(!r || r.error) throw new Error((r && r.error) || 'Sin respuesta del servidor');
+    const sel = (document.getElementById('urg-producto') || {}).value || 'pv';
+    _urgA.prod = sel; _urgA.forz = _urgA.forz || {};
+    _urgA.rows = urgAsigPreparar(window._urgRutsSin || [], r.ops || [], sel, Date.now());
+    urgAsigRender();
+  }catch(e){ box.innerHTML = '<div style="font-size:12px;color:#C0392B;">No se pudo leer el tubo: ' + _urgEsc(e.message || String(e)) + '</div>'; }
+}
+function urgAsigRender(){
+  const box = document.getElementById('urg-asignar'); if(!box) return;
+  const rows = _urgA.rows, res = urgAsigCalcular(rows, _urgA.forz), nombres = urgAsigNombres();
+  rows.sort(function(a, b){ return (b.h === null ? -1 : b.h) - (a.h === null ? -1 : a.h); });
+  const E = _urgEsc;
+  const opts = function(v){ return '<option value="">—</option>' + nombres.map(function(n){ return '<option value="' + E(n) + '"' + (v === n ? ' selected' : '') + '>' + E(urgAsigEtq(n)) + '</option>'; }).join(''); };
+  let h = '<div style="border:1px solid var(--gray-line);border-radius:10px;padding:10px 12px;margin-top:8px;background:#FAFBFD;">'
+    + '<div style="font-weight:700;font-size:13px;color:var(--navy);margin-bottom:4px;">🚑 Asignar urgencias sin asignar</div>'
+    + '<div style="font-size:11px;color:var(--gray-text);margin-bottom:6px;">Las que tienen cupo van a su analista; las <b>forzadas</b> (sin cupo o no encontradas) se reparten entre los analistas que marques abajo, o elige uno por fila. Las forzadas son adicionales: no consumen el cupo (' + res.cap + ' por analista).</div>'
+    + (nombres.length ? '' : '<div style="font-size:12px;color:#C0392B;margin-bottom:6px;">⚠ No hay analistas cargados en el equipo de este navegador. Abre la pestaña Equipo, revisa que estén cargados y vuelve a intentar.</div>')
+    + '<div style="font-size:12px;margin-bottom:8px;"><b>Analistas para forzadas:</b> ' + nombres.map(function(n){ return '<label style="margin-right:10px;white-space:nowrap;"><input type="checkbox" data-n="' + E(n) + '" ' + (_urgA.forz[n] ? 'checked ' : '') + 'onchange="_urgA.forz[this.getAttribute(\'data-n\')]=this.checked;urgAsigRender()"> ' + E(urgAsigEtq(n)) + ' <span style="color:var(--gray-text);">(' + (res.carga[n] || 0) + ')</span></label>'; }).join('') + '</div>';
+  h += '<div style="overflow:auto;max-height:36vh;border:1px solid #E5E9EF;border-radius:8px;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><tr style="background:#F4F6F9;text-align:left;"><th style="padding:4px 8px;">✓</th><th>RUT</th><th>Producto</th><th>Horas háb.</th><th>Analista</th><th>Detalle</th></tr>';
+  rows.forEach(function(r, i){
+    const est = r.h === null ? 'plazo' : slaTuboEstado(r.h);
+    h += '<tr style="border-top:1px solid #EEF1F4;' + (r.forzada ? 'background:#FFF6E5;' : '') + '"><td style="padding:4px 8px;"><input type="checkbox" ' + (r.agregar && r.analista ? 'checked ' : '') + (r.analista && r.seg ? '' : 'disabled ') + 'onchange="_urgA.rows[' + i + '].agregar=this.checked"></td>'
+      + '<td>' + E(r.rut) + '</td><td>' + (r.seg === 'pv' ? 'PV' : r.seg === 'subsidio' ? 'Subsidio' : '—') + '</td>'
+      + '<td style="font-weight:700;color:' + SLA_COL[est] + ';">' + (r.h === null ? '—' : r.h.toFixed(1)) + '</td>'
+      + '<td><select onchange="_urgA.rows[' + i + '].manual=this.value;_urgA.rows[' + i + '].agregar=!!this.value||_urgA.rows[' + i + '].agregar;urgAsigRender()" style="font-size:12px;padding:2px 4px;border:1px solid var(--gray-line);border-radius:6px;">' + opts(r.analista) + '</select></td>'
+      + '<td style="color:var(--gray-text);">' + E(r.motivo || r.sab) + (r.tipo !== 'generica' && r.motivo !== r.sab && r.sab ? ' · ' + E(r.sab) : '') + (r.aviso ? '<div style="color:#BA7517;">⚠ ' + E(r.aviso) + '</div>' : '') + '</td></tr>';
+  });
+  h += '</table></div>';
+  const nAdd = rows.filter(function(r){ return r.agregar && r.analista && r.seg; }).length, nF = rows.filter(function(r){ return r.agregar && r.analista && r.seg && r.forzada; }).length;
+  h += '<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><button onclick="urgAsigAgregar()" ' + (nAdd ? '' : 'disabled ') + 'style="padding:7px 14px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:700;cursor:pointer;' + (nAdd ? '' : 'opacity:.5;') + '">➕ Agregar ' + nAdd + ' al reparto de hoy como urgentes</button>'
+    + '<span style="font-size:12px;color:var(--gray-text);">' + nF + ' forzadas (adicionales)</span></div></div>';
+  box.innerHTML = h;
+}
+function urgAsigAgregar(){
+  if(!_urgPuedeEditar()){ alert('Solo el Jefe de Riesgo puede agregar urgencias al reparto.'); return; }
+  urgAsigCalcular(_urgA.rows, _urgA.forz);
+  const filas = _urgA.rows.filter(function(r){ return r.agregar && r.analista && r.seg; });
+  if(!filas.length){ alert('No hay urgencias para agregar.'); return; }
+  const ya = {}; dayOps.forEach(function(o){ if(o._id_operacion) ya['i:' + o._id_operacion] = 1; const k = asigRut(o.identificador); if(k) ya['r:' + k] = 1; });
+  const nuevas = filas.filter(function(r){ return !(r.op && ya['i:' + r.op.id_operacion]) && !ya['r:' + asigRut(r.rut)]; });
+  if(!nuevas.length){ alert('Todas ya están en el reparto de hoy.'); return; }
+  const nF = nuevas.filter(function(r){ return r.forzada; }).length;
+  if(!window.confirm('Se agregarán ' + nuevas.length + ' urgencias al reparto de hoy (' + nF + ' forzadas como adicionales).\nQuedan marcadas como ⚡ urgentes; si superan el SLA, como 🔴 vencidas.\n\n¿Continuar?')) return;
+  const ahora = Date.now(), ahoraIso = new Date().toISOString();
+  nuevas.forEach(function(r){
+    const o = r.op, p = PRODUCTS.find(function(x){ return x.key === r.seg; });
+    const op = {
+      uid: uid(), productKey: r.seg, productName: p ? p.name : r.seg,
+      identificador: o ? o.rut : r.rut, analista: r.analista, estado: 'PENDIENTE', tier: 'urgente',
+      fecha_riesgo: o && o.fecha_envio ? String(o.fecha_envio).slice(0, 10) : currentDate, _fecha_envio: o ? (o.fecha_envio || '') : '',
+      obs: (o ? 'ID Op: ' + o.id_operacion + ' | Horas hab: ' + (r.h === null ? '—' : r.h.toFixed(1)) + ' | ' : 'Sin datos de sábana | ') + 'Urgencia solicitada' + (r.forzada ? ' | Adicional forzada' : ''), obs_seguimiento: '',
+      asignado_en: ahoraIso, completado_en: null,
+      _id_operacion: o ? o.id_operacion : '', _horas_habiles: r.h === null ? 0 : r.h, _categoria_sla: o ? (o.categoria_sla || 'Inmediata') : 'Inmediata',
+      _derivar_ivan: !!(o && o.derivar_ivan), _resolucion_ia: o ? (o.resolucion_ia || '') : '', _resolucion_agente: o ? (o.resolucion_agente || '') : '', _needs_review: false,
+      _urgencia_solicitada: true, _forzada: !!r.forzada
+    };
+    if(o) slaAplicarConsultaAOp(op, {encontrado:true, estado:'pendiente', segmento:o.segmento, fecha_envio:o.fecha_envio, categoria_sla:o.categoria_sla,
+      id_operacion:o.id_operacion, horas_sabana:o.horas_sabana, duplicada_pendiente:false, n_pendientes:1}, ahora);
+    if(op.tier === 'normal') op.tier = 'urgente';
+    dayOps.push(op);
+  });
+  saveDraft(); buildOpsEntry(); updateDraftBadge();
+  alert('Se agregaron ' + nuevas.length + ' urgencias al reparto de hoy (' + nF + ' forzadas). Revisa la asignación y confirma el reparto.');
+  try{ verificarUrgencias(); }catch(e){}
+}
+// ─── FIN ASIGNAR URGENCIAS ───
+
+// ─── LEASING DESDE CORREO (buzón riesgo@hogarhoy.cl): propuesta de asignación con confirmación ───
+// Lee los correos NO LEÍDOS (el script lector nunca los marca como leídos), un registro por ID, y propone analista
+// con la misma lógica de cupo que MHE. Excluye los ID que ya están en el reparto de hoy o de los últimos días.
+var _lc = {rows:[], ya:[], forz:{}, desde:'', info:null};
+function lcYmd(d){ return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+function lcDiaHabilAnterior(){ const d = new Date(); do{ d.setDate(d.getDate() - 1); }while(d.getDay() === 0 || d.getDay() === 6); return lcYmd(d); }
+function lcFechaCorta(iso){ const d = new Date(iso); return isNaN(d) ? '—' : ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMonth() + 1)).slice(-2) + ' ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); }
+function lcAbrir(){
+  if(!_urgPuedeEditar()){ alert('Solo el Jefe de Riesgo puede asignar Leasing desde el correo.'); return; }
+  document.getElementById('lc-modal-bg')?.remove();
+  _lc = {rows:[], ya:[], forz:{}, desde:lcDiaHabilAnterior(), info:null};
+  const bg = document.createElement('div');
+  bg.id = 'lc-modal-bg';
+  bg.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,16,41,.55);z-index:9500;display:flex;align-items:center;justify-content:center;padding:16px;';
+  bg.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:1000px;width:100%;max-height:92vh;overflow:auto;padding:16px 18px;">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;"><div style="font-weight:800;font-size:15px;color:var(--navy);">📧 Leasing desde correo (riesgo@hogarhoy.cl)</div><button onclick="document.getElementById(\'lc-modal-bg\').remove()" style="border:none;background:none;font-size:20px;cursor:pointer;">✕</button></div>'
+    + '<div style="font-size:12px;color:var(--gray-text);margin:6px 0 10px;">Lee los correos <b>no leídos</b> desde la fecha indicada (sin marcarlos como leídos). Un mismo ID cuenta una sola vez. Las ya asignadas en el reparto de hoy o de los últimos días se excluyen.</div>'
+    + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;"><label style="font-size:12px;font-weight:600;">Desde <input type="date" id="lc-desde" value="' + _lc.desde + '" style="padding:4px 6px;border:1px solid var(--gray-line);border-radius:6px;"></label>'
+    + '<button id="lc-btn-leer" onclick="lcLeer()" style="padding:7px 14px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:700;cursor:pointer;">Leer correos no leídos</button></div>'
+    + '<div id="lc-cuerpo"></div></div>';
+  document.body.appendChild(bg);
+}
+// IDs de Leasing ya cargados: reparto de hoy + días anteriores (lectura de Firebase, últimos 7 días hábiles)
+async function lcYaAsignados(){
+  const ya = {};
+  const add = function(op, fecha){ if(op && op.productKey === 'leasing' && op.identificador){ const k = asigNorm(op.identificador); if(k && !ya[k]) ya[k] = {fecha:fecha, analista:op.analista || ''}; } };
+  dayOps.forEach(function(o){ add(o, currentDate); });
+  const fechas = [], hoy = new Date(currentDate + 'T12:00:00');
+  for(let i = 0, d = new Date(hoy); fechas.length < 7 && i < 20; i++, d.setDate(d.getDate() - 1)){ if(d.getDay() !== 0 && d.getDay() !== 6) fechas.push(lcYmd(d)); }
+  let fallidos = 0;
+  await Promise.all(fechas.map(async function(f){
+    try{
+      const data = await fbGet('ops/' + f);
+      const ops = !data ? [] : (typeof data === 'string' ? JSON.parse(data) : (Array.isArray(data) ? data : []));
+      ops.forEach(function(o){ add(o, f); });
+    }catch(e){ fallidos++; }
+  }));
+  return {ya:ya, fallidos:fallidos};
+}
+function lcPreparar(items, ya, ahoraMs){
+  const rows = [], excl = [], vistos = {};
+  (items || []).forEach(function(it){
+    const k = it.id ? asigNorm(it.id) : '';
+    if(k && ya[k]){ excl.push({id:it.id, fecha:ya[k].fecha, analista:ya[k].analista}); return; }
+    if(k && vistos[k]) return;             // seguridad: un ID, una operación
+    if(k) vistos[k] = 1;
+    const t = Date.parse(it.fecha);
+    rows.push({id:it.id || '', idManual:'', asunto:it.asunto || '', de:it.de || '', fecha:it.fecha, n:it.n || 1, sinId:!it.id, h:isNaN(t) ? null : (ahoraMs - t) / 3600000, agregar:true, manual:'', analista:'', motivo:'', forzada:false});
+  });
+  return {rows:rows, excl:excl};
+}
+function lcIdFila(r){ return String(r.id || r.idManual || '').trim(); }
+// Calcula analista/motivo. Pura salvo lectura de TEAM, availability, CAPS, dayType, dayOps.
+function lcCalcular(rows, forzSel){
+  let cap = CAPS[dayType]; if(typeof cap !== 'number' || isNaN(cap)) cap = 21;
+  const carga = {}; dayOps.forEach(function(o){ if(o.analista && !o._forzada) carga[o.analista] = (carga[o.analista] || 0) + 1; });
+  const c = function(n){ return carga[n] || 0; };
+  rows.forEach(function(r){ r.analista = ''; r.motivo = ''; r.forzada = false; });
+  const validas = rows.filter(function(r){ if(!lcIdFila(r)){ r.motivo = 'Escribe el ID para poder agregarla'; return false; } return true; });
+  validas.forEach(function(r){
+    if(r.manual){ r.forzada = c(r.manual) >= cap; carga[r.manual] = c(r.manual) + 1; r.analista = r.manual; r.motivo = 'Elegido por ti' + (r.forzada ? ' · sobre el cupo (adicional)' : ''); }
+  });
+  const cand = validas.filter(function(r){ return !r.analista; }).map(function(r){ return {seg:'leasing', h:r.h, ant:null, reingreso:false, row:r}; });
+  if(cand.length){
+    const prev = {}; Object.keys(carga).forEach(function(k){ prev[k] = carga[k]; });
+    const R = asigAsignar(cand, prev);
+    R.filas.forEach(function(f){ const r = f.c.row; if(f.analista){ r.analista = f.analista; r.motivo = f.motivo; carga[f.analista] = c(f.analista) + 1; } });
+  }
+  const forzNames = urgAsigNombres().filter(function(n){ return forzSel[n]; });
+  validas.filter(function(r){ return !r.analista; }).sort(function(a, b){ return (b.h === null ? -1 : b.h) - (a.h === null ? -1 : a.h); }).forEach(function(r){
+    if(!forzNames.length){ r.motivo = 'Sin cupo · elige a quién forzarla'; return; }
+    const n = forzNames.slice().sort(function(a, b){ return c(a) - c(b) || a.localeCompare(b); })[0];
+    r.analista = n; r.forzada = true; carga[n] = c(n) + 1; r.motivo = 'Sin cupo · forzada (adicional) a ' + n;
+  });
+  return {cap:cap, carga:carga};
+}
+async function lcLeer(){
+  const cuerpo = document.getElementById('lc-cuerpo'), btn = document.getElementById('lc-btn-leer');
+  const desde = (document.getElementById('lc-desde') || {}).value || lcDiaHabilAnterior();
+  if(btn){ btn.disabled = true; btn.textContent = '⏳ Leyendo el buzón…'; }
+  cuerpo.innerHTML = '<div style="font-size:12px;color:var(--gray-text);">⏳ Leyendo correos no leídos y revisando lo ya asignado…</div>';
+  try{
+    const resp = await Promise.all([gsCall('getLeasingCorreos', {desde:desde}), lcYaAsignados()]);
+    const r = resp[0], y = resp[1];
+    if(!r || r.error) throw new Error((r && r.error) || 'Sin respuesta del servidor');
+    const P = lcPreparar(r.items || [], y.ya, Date.now());
+    _lc.rows = P.rows; _lc.ya = P.excl; _lc.desde = desde;
+    _lc.info = {mensajes:r.mensajes || 0, truncado:!!r.truncado, fallidos:y.fallidos, ids:(r.items || []).length};
+    lcRender();
+  }catch(e){ cuerpo.innerHTML = '<div style="font-size:12px;color:#C0392B;">No se pudo leer el buzón: ' + _urgEsc(e.message || String(e)) + '</div>'; }
+  if(btn){ btn.disabled = false; btn.textContent = 'Leer correos no leídos'; }
+}
+function lcRender(){
+  const cuerpo = document.getElementById('lc-cuerpo'); if(!cuerpo) return;
+  const rows = _lc.rows, res = lcCalcular(rows, _lc.forz), nombres = urgAsigNombres(), E = _urgEsc;
+  rows.sort(function(a, b){ return (b.h === null ? -1 : b.h) - (a.h === null ? -1 : a.h); });
+  const opts = function(v){ return '<option value="">—</option>' + nombres.map(function(n){ return '<option value="' + E(n) + '"' + (v === n ? ' selected' : '') + '>' + E(urgAsigEtq(n)) + '</option>'; }).join(''); };
+  const I = _lc.info || {};
+  let h = '<div style="font-size:12px;margin-bottom:6px;"><b>' + rows.length + '</b> por asignar · ' + _lc.ya.length + ' ya asignadas (excluidas) · ' + (I.mensajes || 0) + ' correos no leídos leídos → ' + (I.ids || 0) + ' IDs distintos desde el ' + E(_lc.desde) + '</div>';
+  if(I.truncado) h += '<div style="font-size:12px;color:#BA7517;margin-bottom:6px;">⚠ Hay más correos de los que se pueden leer de una vez; acorta el rango «Desde».</div>';
+  if(I.fallidos) h += '<div style="font-size:12px;color:#BA7517;margin-bottom:6px;">⚠ No se pudieron revisar ' + I.fallidos + ' día(s) anteriores del gestor: puede haber IDs ya asignados que no se excluyeron.</div>';
+  if(!nombres.length) h += '<div style="font-size:12px;color:#C0392B;margin-bottom:6px;">⚠ No hay analistas cargados en el equipo de este navegador. Revisa la pestaña Equipo.</div>';
+  if(!rows.length){ h += '<div style="padding:14px;text-align:center;color:var(--gray-text);font-size:13px;">No hay correos no leídos por asignar.</div>'; }
+  else {
+    h += '<div style="font-size:11px;color:var(--gray-text);margin-bottom:6px;">Se asigna a la más antigua primero, con el cupo (' + res.cap + ' por analista) y los analistas de Leasing disponibles. Las <b>forzadas</b> (sin cupo) son adicionales y se reparten entre los que marques, o elige analista por fila.</div>'
+      + '<div style="font-size:12px;margin-bottom:8px;"><b>Analistas para forzadas:</b> ' + nombres.map(function(n){ return '<label style="margin-right:10px;white-space:nowrap;"><input type="checkbox" data-n="' + E(n) + '" ' + (_lc.forz[n] ? 'checked ' : '') + 'onchange="_lc.forz[this.getAttribute(\'data-n\')]=this.checked;lcRender()"> ' + E(urgAsigEtq(n)) + ' <span style="color:var(--gray-text);">(' + (res.carga[n] || 0) + ')</span></label>'; }).join('') + '</div>';
+    h += '<div style="overflow:auto;max-height:44vh;border:1px solid #E5E9EF;border-radius:8px;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><tr style="background:#F4F6F9;text-align:left;"><th style="padding:4px 8px;">✓</th><th>ID</th><th>Asunto</th><th>Recibido</th><th>Correos</th><th>Analista</th><th>Detalle</th></tr>';
+    rows.forEach(function(r, i){
+      const idCel = r.sinId ? '<input type="text" value="' + E(r.idManual) + '" placeholder="ID" onchange="_lc.rows[' + i + '].idManual=this.value;lcRender()" style="width:90px;font-size:12px;padding:2px 4px;border:1px solid #BA7517;border-radius:6px;">' : '<b>' + E(r.id) + '</b>';
+      const puede = !!(r.analista && lcIdFila(r));
+      h += '<tr style="border-top:1px solid #EEF1F4;' + (r.forzada ? 'background:#FFF6E5;' : (!puede ? 'background:#FCEBEB;' : '')) + '"><td style="padding:4px 8px;"><input type="checkbox" ' + (r.agregar && puede ? 'checked ' : '') + (puede ? '' : 'disabled ') + 'onchange="_lc.rows[' + i + '].agregar=this.checked;lcRender()"></td>'
+        + '<td>' + idCel + '</td><td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + E(r.asunto) + '">' + E(r.asunto) + '</td><td style="white-space:nowrap;">' + E(lcFechaCorta(r.fecha)) + (r.h === null ? '' : ' · ' + r.h.toFixed(0) + ' h') + '</td><td>' + r.n + '</td>'
+        + '<td><select onchange="_lc.rows[' + i + '].manual=this.value;_lc.rows[' + i + '].agregar=true;lcRender()" style="font-size:12px;padding:2px 4px;border:1px solid var(--gray-line);border-radius:6px;">' + opts(r.analista) + '</select></td>'
+        + '<td style="color:var(--gray-text);">' + E(r.motivo) + '</td></tr>';
+    });
+    h += '</table></div>';
+    const nAdd = rows.filter(function(r){ return r.agregar && r.analista && lcIdFila(r); }).length, nF = rows.filter(function(r){ return r.agregar && r.analista && lcIdFila(r) && r.forzada; }).length;
+    h += '<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><button onclick="lcAgregar()" ' + (nAdd ? '' : 'disabled ') + 'style="padding:7px 14px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:700;cursor:pointer;' + (nAdd ? '' : 'opacity:.5;') + '">➕ Agregar ' + nAdd + ' Leasing al reparto de hoy</button><span style="font-size:12px;color:var(--gray-text);">' + nF + ' forzadas (adicionales) · los correos quedan sin leer</span></div>';
+  }
+  if(_lc.ya.length) h += '<details style="margin-top:8px;font-size:12px;"><summary style="cursor:pointer;color:var(--gray-text);">' + _lc.ya.length + ' ya asignadas (excluidas)</summary>' + _lc.ya.map(function(x){ return '<div style="padding:2px 0 2px 14px;">' + E(x.id) + ' · ' + E(x.analista || 'sin analista') + ' · ' + E(x.fecha) + '</div>'; }).join('') + '</details>';
+  cuerpo.innerHTML = h;
+}
+function lcAgregar(){
+  if(!_urgPuedeEditar()){ alert('Solo el Jefe de Riesgo puede agregar Leasing al reparto.'); return; }
+  lcCalcular(_lc.rows, _lc.forz);
+  const ya = {}; dayOps.forEach(function(o){ if(o.productKey === 'leasing' && o.identificador) ya[asigNorm(o.identificador)] = 1; });
+  const filas = _lc.rows.filter(function(r){ return r.agregar && r.analista && lcIdFila(r) && !ya[asigNorm(lcIdFila(r))]; });
+  if(!filas.length){ alert('No hay operaciones nuevas para agregar.'); return; }
+  const nF = filas.filter(function(r){ return r.forzada; }).length;
+  if(!window.confirm('Se agregarán ' + filas.length + ' operaciones de Leasing al reparto de hoy (' + nF + ' forzadas como adicionales).\nLos correos NO se marcan como leídos.\n\n¿Continuar?')) return;
+  const p = PRODUCTS.find(function(x){ return x.key === 'leasing'; }), ahoraIso = new Date().toISOString();
+  filas.forEach(function(r){
+    const t = new Date(r.fecha), fr = isNaN(t) ? currentDate : lcYmd(t);
+    dayOps.push({
+      uid: uid(), productKey: 'leasing', productName: p ? p.name : 'Leasing Habitacional',
+      identificador: lcIdFila(r), analista: r.analista, estado: 'PENDIENTE', tier: classifyTier(fr, p ? p.slaH : 24),
+      fecha_riesgo: fr, obs: 'Origen: correo riesgo@hogarhoy.cl | Recibido ' + lcFechaCorta(r.fecha) + (r.forzada ? ' | Adicional forzada' : ''), obs_seguimiento: '',
+      asignado_en: ahoraIso, completado_en: null, _origen_correo: true, _forzada: !!r.forzada
+    });
+  });
+  saveDraft(); buildOpsEntry(); updateDraftBadge();
+  alert('Se agregaron ' + filas.length + ' operaciones de Leasing (' + nF + ' forzadas). Revisa la asignación y confirma el reparto.');
+  lcLeer();
+}
+// ─── FIN LEASING DESDE CORREO ───
 
 // ─── CONSULTA DE SLA POR RUT / ID ───────────────────────────────────────────────────────────
 // El gestor pregunta al Apps Script (acción getSLAPorIdentificadores) por una lista de RUT o IDs de operación y recibe,
@@ -3155,6 +3491,25 @@ function volsDesdePantalla(){
   });
   return v;
 }
+// Guarda la planificación del día. Si ya había una confirmada con otros volúmenes, pregunta antes de reemplazarla;
+// si se conserva la original, la reconfirmación queda en «ultimaConfirmacion» y lo planificado no se pisa.
+async function guardarPlanificacionDia(planData){
+  const ruta = 'planificacion/' + planData.date;
+  let previa = null;
+  try{ previa = _planParse(await fbGet(ruta)); }catch(e){}
+  const suma = function(p){ let t = 0; if(p && p.vols) Object.values(p.vols).forEach(function(v){ t += parseInt((v && v.total) || 0); }); return t; };
+  const sPrev = suma(previa), sNueva = suma(planData);
+  if(previa && sPrev > 0 && sPrev !== sNueva){
+    const reemplazar = window.confirm('Ya hay una planificación confirmada para ' + planData.date + ' con ' + sPrev + ' operaciones planificadas, y la pantalla ahora muestra ' + sNueva + '.\n\n¿Reemplazar la planificación original por la actual?\n\nAceptar = reemplazar\nCancelar = conservar la original (recomendado si solo estás reconfirmando el reparto)');
+    if(!reemplazar){
+      const ult = {confirmedBy: planData.confirmedBy, confirmedAt: planData.confirmedAt, totalOps: planData.totalOps, vols: planData.vols, teamSize: planData.teamSize};
+      await fbSet(ruta, JSON.stringify(Object.assign({}, previa, {ultimaConfirmacion: ult})));
+      return 'conservada';
+    }
+  }
+  await fbSet(ruta, JSON.stringify(planData));
+  return 'guardada';
+}
 function _planParse(data){
   if(!data) return null;
   try{ return typeof data==='string' ? JSON.parse(data) : data; }catch(e){ return null; }
@@ -3480,6 +3835,7 @@ function buildOpsEntry(){
           </div>
           <div id="op-list-${p.key}">${ops.map(o=>opRowHTML(o, p)).join('')}</div>
           <button class="add-op-btn" onclick="addOp('${p.key}')">+ Agregar ${p.idType}</button>
+          ${p.key==='leasing' && _urgPuedeEditar() ? '<button class="add-op-btn" onclick="lcAbrir()" style="margin-left:8px;">📧 Leasing desde correo</button>' : ''}
         </div>`;
     }).join('');
   } else {
@@ -4135,6 +4491,12 @@ async function confirmDay(){
   // Los volúmenes que se guardan deben ser los de ESTA fecha (los que se ven en Planificación)
   const volsPant = volsDesdePantalla();
   const totalPant = Object.keys(volsPant).reduce(function(s,k){ return s+volsPant[k].total; }, 0);
+  // Si todos los volúmenes son exactamente los valores por defecto, casi seguro no se cargó la planificación del día
+  const sonDefecto = PRODUCTS.every(function(p){ return (volsPant[p.key]||{}).total === p.dflt && !(volsPant[p.key]||{}).urgent; });
+  if(sonDefecto){
+    const okDef = window.confirm('⚠ Los volúmenes de '+currentDate+' son exactamente los valores por defecto ('+totalPant+' operaciones). Probablemente la planificación del día no se cargó.\n\nAceptar = confirmar igual con estos volúmenes.\nCancelar = volver a Planificación a ingresar los volúmenes reales.');
+    if(!okDef) return;
+  }
   if(currentDate !== todayISO() || totalPant === 0){
     const det = PRODUCTS.map(function(p){ return p.name+' '+((volsPant[p.key]||{}).total||0); }).join(' · ');
     const okVol = window.confirm('Se guardará la planificación del '+currentDate+':\n'+det+'\nTotal: '+totalPant+' operaciones.\n\n¿Son los volúmenes de esa fecha?\nAceptar = confirmar. Cancelar = volver a Planificación a corregirlos.');
@@ -4185,7 +4547,7 @@ async function confirmDay(){
           teamSize: activeAnalistas,
           availability: Object.assign({}, availability)
         };
-        await fbSet('planificacion/'+currentDate, JSON.stringify(planData));
+        await guardarPlanificacionDia(planData);
       }catch(e){ console.warn('No se pudo guardar planificación en Firebase:', e); }
       // También intentar OperacionesV2 en background
       store.setOps(currentDate, dayOps, currentUser||'--')
@@ -4225,7 +4587,7 @@ async function confirmDay(){
           teamSize: activeAnalistas,
           availability: Object.assign({}, availability)
         };
-        await fbSet('planificacion/'+currentDate, JSON.stringify(planData));
+        await guardarPlanificacionDia(planData);
       }catch(e){ console.warn('No se pudo guardar planificación en Firebase:', e); }
       // También intentar OperacionesV2 en background
       store.setOps(currentDate, dayOps, currentUser||'--')
@@ -4520,6 +4882,7 @@ function abrirVerificadorUrgencias(){
     + '<button onclick="cerrarVerificadorUrgencias()" style="border:none;background:transparent;font-size:18px;cursor:pointer;color:var(--gray-text);">✕</button></div>'
     + '<div style="font-size:12px;color:var(--gray-text);margin-bottom:10px;">Pega el texto del correo. Detecto los RUT/CPF e IDs y te digo cuáles están asignadas. El texto se procesa solo en tu navegador y no se guarda.</div>'
     + '<textarea id="urg-texto" rows="7" placeholder="Pega aquí el correo de urgencias..." style="width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--gray-line);border-radius:8px;font-size:13px;font-family:inherit;resize:vertical;"></textarea>'
+    + '<div style="margin-top:8px;font-size:12px;color:var(--gray-text);">Producto del correo (para las urgencias que no estén en el tubo): <select id="urg-producto" style="font-size:12px;padding:3px 6px;border:1px solid var(--gray-line);border-radius:6px;"><option value="pv">Primera Vivienda</option><option value="subsidio">Subsidio</option></select></div>'
     + '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">'
     + '<button onclick="verificarUrgencias()" style="padding:8px 18px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-size:13px;font-weight:700;cursor:pointer;">Verificar</button>'
     + '<button onclick="document.getElementById(\'urg-texto\').value=\'\';document.getElementById(\'urg-resultado\').innerHTML=\'\';window._urgResumenTxt=\'\';" style="padding:8px 14px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;font-size:13px;cursor:pointer;">Limpiar</button>'
@@ -4622,6 +4985,8 @@ async function verificarUrgencias(){
     html += '<details style="margin-top:6px;"><summary style="font-size:11px;color:var(--gray-text);cursor:pointer;">'+numsSin.length+' número(s) del correo sin coincidencia (pueden ser IDs sin asignar u otros datos)</summary>'
       + '<div style="font-size:11px;color:var(--gray-text);padding:6px 0;">'+numsSin.map(function(e){ return _urgEsc(e.tok.raw); }).join(' · ')+'</div></details>';
   }
+  window._urgRutsSin = rutsSin;
+  if(rutsSin.length && _urgPuedeEditar()) html += '<div id="urg-asignar" style="margin-top:8px;"><button onclick="urgAsigAbrir()" style="padding:7px 14px;border:1px solid #BA7517;border-radius:8px;background:#fff;color:#BA7517;font-size:12px;font-weight:700;cursor:pointer;">🚑 Asignar las ' + rutsSin.length + ' sin asignar…</button></div>';
   html += '<div style="margin-top:10px;"><button onclick="copiarResumenUrgencias()" style="padding:6px 14px;border:1px solid var(--navy);border-radius:8px;background:#fff;color:var(--navy);font-size:12px;font-weight:600;cursor:pointer;">📋 Copiar resumen</button></div>';
   window._urgResumenTxt = lineas.join('\n');
   out.innerHTML = html;
@@ -5782,6 +6147,210 @@ async function dashIngresosAgregar(chart, weekDays, ops){
     if(nota) nota.textContent = 'Ingresadas por el área comercial no disponible: ' + e.message + (/desconocid/i.test(e.message) ? ' (falta agregar la acción getIngresosMHE en Código.gs y crear una nueva versión de la implementación)' : '');
   }
 }
+// ─── SOLICITUDES DEL PERÍODO (tarjeta del Dashboard) ──────────────────────────────────────────────────────
+// MHE (Primera Vivienda y Subsidio): según la sábana (acción getIngresosMHE → por_segmento): ingresos = primera iteración,
+// reingresos = iteración 2 o más, solicitudes = todos los envíos. Se cuentan los días corridos del período (incluye fines de semana).
+// Leasing, Pie y Brasil: según el gestor = operaciones asignadas en los días del período (no distingue reingresos).
+async function dashSolicitudesRender(weekDays, ops){
+  const body = document.getElementById('dashboard-body');
+  if(!body || !weekDays || !weekDays.length) return;
+  let box = document.getElementById('dash-solicitudes');
+  if(!box){
+    box = document.createElement('div');
+    box.id = 'dash-solicitudes';
+    box.style.cssText = 'background:#fff;border:1px solid var(--gray-line);border-radius:12px;padding:16px;';
+    body.appendChild(box);
+  }
+  const desde = weekDays[0], hasta = weekDays[weekDays.length - 1];
+  box.innerHTML = '<div style="font-weight:700;color:var(--navy);margin-bottom:6px;">Solicitudes del período ' + _urgEsc(desde) + ' → ' + _urgEsc(hasta) + '</div><div style="font-size:12px;color:#6b7a90;">Cargando…</div>';
+  const idx = {}; weekDays.forEach(function(d){ idx[d] = true; });
+  const gest = {leasing:0, pie:0, brasil:0};
+  (ops || []).forEach(function(op){ if(op && idx[op._date] && gest[op.productKey] !== undefined) gest[op.productKey]++; });
+  let seg = null, errMsg = '';
+  try{
+    const r = await dashMHEFetch(desde, hasta);
+    if(!r || r.error) throw new Error((r && r.error) || 'sin respuesta');
+    if(!r.por_segmento) throw new Error('falta actualizar el Apps Script (la acción getIngresosMHE no trae el detalle por producto)');
+    seg = r.por_segmento;
+  }catch(e){ errMsg = e.message || String(e); }
+  const num = function(v){ return (v === null || v === undefined) ? '—' : Number(v).toLocaleString('es-CL'); };
+  const fila = function(nombre, ing, rei, tot, fuente, bold){
+    return '<tr' + (bold ? ' style="font-weight:700;background:#f3f6fa;"' : '') + '><td style="padding:6px 8px;">' + nombre + '</td><td style="padding:6px 8px;text-align:right;">' + num(ing) + '</td><td style="padding:6px 8px;text-align:right;">' + num(rei) + '</td><td style="padding:6px 8px;text-align:right;font-weight:700;">' + num(tot) + '</td><td style="padding:6px 8px;color:#6b7a90;font-size:11px;">' + fuente + '</td></tr>';
+  };
+  let rows = '', tIng = 0, tRei = 0, tTot = 0, hayMHE = false;
+  if(seg){
+    const g = function(k){ return seg[k] || {ingresos:0, reingresos:0, total:0}; };
+    const pv = g('Primera Vivienda'), su = g('Subsidio');
+    let otros = {ingresos:0, reingresos:0, total:0};
+    Object.keys(seg).forEach(function(k){ if(k !== 'Primera Vivienda' && k !== 'Subsidio'){ otros.ingresos += seg[k].ingresos; otros.reingresos += seg[k].reingresos; otros.total += seg[k].total; } });
+    rows += fila('Primera Vivienda (MHE)', pv.ingresos, pv.reingresos, pv.total, 'Sábana');
+    rows += fila('Subsidio (MHE)', su.ingresos, su.reingresos, su.total, 'Sábana');
+    if(otros.total) rows += fila('Otros MHE', otros.ingresos, otros.reingresos, otros.total, 'Sábana');
+    [pv, su, otros].forEach(function(x){ tIng += x.ingresos; tRei += x.reingresos; tTot += x.total; });
+    hayMHE = true;
+  }else{
+    rows += '<tr><td colspan="5" style="padding:8px;color:#BA7517;font-size:12px;">MHE no disponible: ' + _urgEsc(errMsg) + '</td></tr>';
+  }
+  rows += fila('Leasing Habitacional', null, null, gest.leasing, 'Gestor (asignadas)');
+  rows += fila('Pie Hipotecario', null, null, gest.pie, 'Gestor (asignadas)');
+  rows += fila('Brasil', null, null, gest.brasil, 'Gestor (asignadas)');
+  const totalGeneral = tTot + gest.leasing + gest.pie + gest.brasil;
+  rows += fila('Total solicitudes', hayMHE ? tIng : null, hayMHE ? tRei : null, hayMHE ? totalGeneral : null, '', true);
+  box.innerHTML = '<div style="font-weight:700;color:var(--navy);margin-bottom:2px;">Solicitudes del período ' + _urgEsc(desde) + ' → ' + _urgEsc(hasta) + '</div>'
+    + '<div style="font-size:11px;color:#6b7a90;margin-bottom:8px;">Ingresos = primera vez que llega a riesgo · Reingresos = vuelve a enviarse · Solicitudes = ingresos + reingresos. MHE desde la sábana; Leasing, Pie y Brasil desde el gestor (no distingue reingresos). No se filtra por analista.</div>'
+    + '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;color:var(--navy);"><thead><tr style="border-bottom:2px solid var(--gray-line);text-align:right;"><th style="padding:6px 8px;text-align:left;">Producto</th><th style="padding:6px 8px;">Ingresos</th><th style="padding:6px 8px;">Reingresos</th><th style="padding:6px 8px;">Solicitudes</th><th style="padding:6px 8px;text-align:left;">Fuente</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+// ─── RESULTADOS DEL PERÍODO (tarjeta del Dashboard): aprobadas, devueltas y rechazadas por producto ─────────
+// MHE (Primera Vivienda y Subsidio): resolución de cada envío según la sábana (por fecha de envío; las pendientes no entran al %).
+// Leasing, Pie y Brasil: resultado registrado en el gestor para las operaciones asignadas en el período.
+var _dashMHEcache = {key:'', t:0, p:null};
+function dashMHEFetch(desde, hasta){
+  const key = desde + '|' + hasta, ahora = Date.now();
+  if(_dashMHEcache.p && _dashMHEcache.key === key && ahora - _dashMHEcache.t < 20000) return _dashMHEcache.p;
+  const p = gsCall('getIngresosMHE', {desde: desde, hasta: hasta});
+  _dashMHEcache = {key:key, t:ahora, p:p};
+  p.catch(function(){ if(_dashMHEcache.p === p) _dashMHEcache.p = null; });
+  return p;
+}
+var _dashResProd = '', _dashResEstado = null;
+// ─── RESULTADOS POR RUT (vista de la tarjeta «Resultados del período»): estado final de cada RUT, por mes y últimos 3 meses ───
+var _dashResModo = 'solicitud', _dashRutEstado = null;
+function dashRutPeriodos(hasta){
+  const y = parseInt(hasta.slice(0, 4), 10), m = parseInt(hasta.slice(5, 7), 10) - 1;
+  const MES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const pad = function(n){ return ('0' + n).slice(-2); };
+  const fin = function(yy, mm){ return new Date(Date.UTC(yy, mm + 1, 0)).getUTCDate(); };
+  const ps = [];
+  for(let k = 2; k >= 0; k--){
+    const d = new Date(Date.UTC(y, m - k, 1)), yy = d.getUTCFullYear(), mm = d.getUTCMonth();
+    const ult = k === 0 ? hasta : yy + '-' + pad(mm + 1) + '-' + pad(fin(yy, mm));
+    ps.push({k: MES[mm] + (k === 0 ? ' (hasta ' + hasta.slice(8) + ')' : ''), desde: yy + '-' + pad(mm + 1) + '-01', hasta: ult});
+  }
+  ps.push({k: 'Últimos 3 meses', desde: ps[0].desde, hasta: hasta});
+  return ps;
+}
+async function dashResultadosRutCargar(){
+  const box = document.getElementById('dash-resultados');
+  const base = _dashResEstado ? _dashResEstado.hasta : todayISO();
+  const ps = dashRutPeriodos(base);
+  if(box) box.querySelector('#dash-res-cuerpo').innerHTML = '<div style="font-size:12px;color:#6b7a90;">Calculando por RUT (lee toda la sábana, puede tardar unos segundos)…</div>';
+  try{
+    const r = await gsCall('getIngresosMHE', {desde: ps[0].desde, hasta: base, periodos_rut: ps});
+    if(!r || r.error) throw new Error((r && r.error) || 'sin respuesta');
+    if(!r.por_rut) throw new Error('falta actualizar el Apps Script (la acción getIngresosMHE no trae la vista por RUT)');
+    _dashRutEstado = {ps: ps, datos: r.por_rut, error: ''};
+  }catch(e){ _dashRutEstado = {ps: ps, datos: null, error: e.message || String(e)}; }
+  dashResultadosPintar();
+}
+function dashResultadosRutHtml(sel){
+  const E = _dashRutEstado;
+  if(!E) return '<div style="font-size:12px;color:#6b7a90;">Cargando…</div>';
+  if(!E.datos) return '<div style="font-size:12px;color:#BA7517;">Por RUT no disponible: ' + _urgEsc(E.error) + '</div>';
+  const segSel = sel === 'pv' ? 'Primera Vivienda' : sel === 'subsidio' ? 'Subsidio' : '';
+  if(sel && !segSel) return '<div style="font-size:12px;color:#6b7a90;">La vista por RUT solo existe para Primera Vivienda y Subsidio (sábana). Elige «Todos» o un producto MHE.</div>';
+  const pct = function(x, t){ return t ? (x / t * 100).toFixed(1).replace('.', ',') + '%' : '—'; };
+  const cel = function(x, t, c){ return '<td style="padding:6px 8px;text-align:right;">' + x.toLocaleString('es-CL') + ' <span style="color:' + c + ';font-weight:700;">' + pct(x, t) + '</span></td>'; };
+  let rows = '';
+  E.ps.forEach(function(p, i){
+    const seg = E.datos[p.k] || {};
+    const b = {rut:0, aprobado:0, devuelto:0, rechazado:0, pendiente:0, con_devolucion:0, recuperados:0};
+    Object.keys(seg).forEach(function(k){ if(segSel && k !== segSel) return; Object.keys(b).forEach(function(f){ b[f] += seg[k][f] || 0; }); });
+    const res = b.aprobado + b.devuelto + b.rechazado;
+    const ult = i === E.ps.length - 1;
+    rows += '<tr' + (ult ? ' style="font-weight:700;background:#f3f6fa;"' : '') + '><td style="padding:6px 8px;">' + _urgEsc(p.k) + '</td><td style="padding:6px 8px;text-align:right;">' + b.rut.toLocaleString('es-CL') + '</td><td style="padding:6px 8px;text-align:right;">' + res.toLocaleString('es-CL') + '</td>'
+      + cel(b.aprobado, res, '#27AE60') + cel(b.devuelto, res, '#E67E22') + cel(b.rechazado, res, '#C0392B')
+      + '<td style="padding:6px 8px;text-align:right;">' + b.recuperados.toLocaleString('es-CL') + ' de ' + b.con_devolucion.toLocaleString('es-CL') + ' <span style="color:#27AE60;font-weight:700;">' + pct(b.recuperados, b.con_devolucion) + '</span></td></tr>';
+  });
+  return '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;color:var(--navy);"><thead><tr style="border-bottom:2px solid var(--gray-line);text-align:right;"><th style="padding:6px 8px;text-align:left;">Período</th><th style="padding:6px 8px;">RUT</th><th style="padding:6px 8px;">Resueltos</th><th style="padding:6px 8px;">Aprobado</th><th style="padding:6px 8px;">Devuelto</th><th style="padding:6px 8px;">Rechazado</th><th style="padding:6px 8px;">Devueltos que terminan aprobados</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+    + '<div style="font-size:11px;color:#6b7a90;margin-top:6px;">Un RUT cuenta una vez y se clasifica por el resultado de su último envío a hoy. «Devuelto» es un estado abierto: comercial aún puede corregir y reenviar. Los pendientes no entran al %. Los RUT no se pueden sumar entre meses (el mismo RUT puede aparecer en varios). Solo MHE (sábana).</div>';
+}
+
+function dashResultadosModo(m){
+  _dashResModo = m;
+  if(m === 'rut' && (!_dashRutEstado || _dashRutEstado.error)){ dashResultadosPintar(); dashResultadosRutCargar(); return; }
+  dashResultadosPintar();
+}
+function dashResultadosPintar(){
+  const box = document.getElementById('dash-resultados'), E = _dashResEstado;
+  if(!box || !E) return;
+  const sel = _dashResProd;
+  if(_dashResModo === 'rut'){
+    const tabs = '<span style="display:inline-flex;gap:4px;"><button onclick="dashResultadosModo(\'solicitud\')" style="font-size:12px;padding:5px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer;">Por solicitud</button><button style="font-size:12px;padding:5px 10px;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:default;">Por RUT</button></span>';
+    const optsR = ['<option value="">Todos (MHE)</option><option value="pv"' + (sel === 'pv' ? ' selected' : '') + '>Primera Vivienda</option><option value="subsidio"' + (sel === 'subsidio' ? ' selected' : '') + '>Subsidio</option>'].join('');
+    box.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;"><div style="font-weight:700;color:var(--navy);">Resultados por RUT · últimos 3 meses</div><div style="display:flex;gap:8px;align-items:center;">' + tabs
+      + '<select onchange="_dashResProd=this.value;dashResultadosPintar();" style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-line);border-radius:8px;color:var(--navy);background:#fff;">' + optsR + '</select></div></div><div id="dash-res-cuerpo">' + dashResultadosRutHtml(sel) + '</div>';
+    return;
+  }
+  const defs = [
+    {k:'pv', n:'Primera Vivienda (MHE)', f:'Sábana'}, {k:'subsidio', n:'Subsidio (MHE)', f:'Sábana'},
+    {k:'leasing', n:'Leasing Habitacional', f:'Gestor'}, {k:'pie', n:'Pie Hipotecario', f:'Gestor'}, {k:'brasil', n:'Brasil', f:'Gestor'}
+  ];
+  const pct = function(x, t){ return t ? (x / t * 100).toFixed(1).replace('.', ',') + '%' : '—'; };
+  const celda = function(x, t, color){ return '<td style="padding:6px 8px;text-align:right;">' + (x === null ? '—' : Number(x).toLocaleString('es-CL')) + ' <span style="color:' + color + ';font-weight:700;">' + (x === null ? '' : pct(x, t)) + '</span></td>'; };
+  let rows = '', T = {ap:0, dv:0, rc:0, pend:0}, hayAlgo = false;
+  defs.forEach(function(d){
+    if(sel && sel !== d.k) return;
+    const r = E.datos[d.k];
+    if(!r){ rows += '<tr><td style="padding:6px 8px;">' + d.n + '</td><td colspan="5" style="padding:6px 8px;color:#BA7517;font-size:12px;">' + _urgEsc(E.errores[d.f] || 'sin datos') + '</td></tr>'; return; }
+    hayAlgo = true;
+    const tot = r.ap + r.dv + r.rc;
+    T.ap += r.ap; T.dv += r.dv; T.rc += r.rc; T.pend += r.pend;
+    rows += '<tr><td style="padding:6px 8px;">' + d.n + '</td><td style="padding:6px 8px;text-align:right;font-weight:700;">' + tot.toLocaleString('es-CL') + '</td>'
+      + celda(r.ap, tot, '#27AE60') + celda(r.dv, tot, '#E67E22') + celda(r.rc, tot, '#C0392B')
+      + '<td style="padding:6px 8px;text-align:right;color:#6b7a90;">' + r.pend.toLocaleString('es-CL') + '</td></tr>';
+  });
+  const tt = T.ap + T.dv + T.rc;
+  if(hayAlgo && !sel) rows += '<tr style="font-weight:700;background:#f3f6fa;"><td style="padding:6px 8px;">Total</td><td style="padding:6px 8px;text-align:right;">' + tt.toLocaleString('es-CL') + '</td>'
+    + celda(T.ap, tt, '#27AE60') + celda(T.dv, tt, '#E67E22') + celda(T.rc, tt, '#C0392B') + '<td style="padding:6px 8px;text-align:right;color:#6b7a90;">' + T.pend.toLocaleString('es-CL') + '</td></tr>';
+  const opts = ['<option value="">Todos los productos</option>'].concat(defs.map(function(d){ return '<option value="' + d.k + '"' + (sel === d.k ? ' selected' : '') + '>' + d.n + '</option>'; })).join('');
+  const errTxt = Object.keys(E.errores).map(function(k){ return k + ': ' + E.errores[k]; }).join(' · ');
+  box.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:4px;"><div style="font-weight:700;color:var(--navy);">Resultados del período ' + _urgEsc(E.desde) + ' → ' + _urgEsc(E.hasta) + '</div>'
+    + '<div style="display:flex;gap:8px;align-items:center;"><span style="display:inline-flex;gap:4px;"><button style="font-size:12px;padding:5px 10px;border:1px solid var(--navy);border-radius:8px;background:var(--navy);color:#fff;cursor:default;">Por solicitud</button><button onclick="dashResultadosModo(\'rut\')" style="font-size:12px;padding:5px 10px;border:1px solid var(--gray-line);border-radius:8px;background:#fff;color:var(--navy);cursor:pointer;">Por RUT</button></span><select onchange="_dashResProd=this.value;dashResultadosPintar();" style="font-size:12px;padding:5px 8px;border:1px solid var(--gray-line);border-radius:8px;color:var(--navy);background:#fff;">' + opts + '</select></div></div>'
+    + '<div style="font-size:11px;color:#6b7a90;margin-bottom:8px;">Resueltas = aprobadas (100% y con propuesta) + devueltas a comercial + rechazadas. El % es sobre las resueltas; las pendientes no entran. MHE según la sábana (por fecha de envío); Leasing, Pie y Brasil según el resultado registrado en el gestor. No se filtra por analista.</div>'
+    + '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:13px;color:var(--navy);"><thead><tr style="border-bottom:2px solid var(--gray-line);text-align:right;"><th style="padding:6px 8px;text-align:left;">Producto</th><th style="padding:6px 8px;">Resueltas</th><th style="padding:6px 8px;">Aprobadas</th><th style="padding:6px 8px;">Devueltas</th><th style="padding:6px 8px;">Rechazadas</th><th style="padding:6px 8px;">Pendientes / sin resultado</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+    + (errTxt ? '<div style="font-size:11px;color:#BA7517;margin-top:6px;">' + _urgEsc(errTxt) + '</div>' : '');
+}
+async function dashResultadosRender(weekDays, ops){
+  const body = document.getElementById('dashboard-body');
+  if(!body || !weekDays || !weekDays.length) return;
+  let box = document.getElementById('dash-resultados');
+  if(!box){
+    box = document.createElement('div');
+    box.id = 'dash-resultados';
+    box.style.cssText = 'background:#fff;border:1px solid var(--gray-line);border-radius:12px;padding:16px;';
+    body.appendChild(box);
+  }
+  const desde = weekDays[0], hasta = weekDays[weekDays.length - 1];
+  box.innerHTML = '<div style="font-weight:700;color:var(--navy);margin-bottom:6px;">Resultados del período ' + _urgEsc(desde) + ' → ' + _urgEsc(hasta) + '</div><div style="font-size:12px;color:#6b7a90;">Cargando…</div>';
+  const idx = {}; weekDays.forEach(function(d){ idx[d] = true; });
+  const datos = {}, errores = {};
+  ['leasing', 'pie', 'brasil'].forEach(function(k){ datos[k] = {ap:0, dv:0, rc:0, pend:0}; });
+  (ops || []).forEach(function(op){
+    if(!op || !idx[op._date] || !datos[op.productKey]) return;
+    const t = op._resultado && op._resultado.tipo;
+    if(t === 'aprobada') datos[op.productKey].ap++;
+    else if(t === 'devuelta') datos[op.productKey].dv++;
+    else if(t === 'rechazada') datos[op.productKey].rc++;
+    else datos[op.productKey].pend++;
+  });
+  try{
+    const r = await dashMHEFetch(desde, hasta);
+    if(!r || r.error) throw new Error((r && r.error) || 'sin respuesta');
+    if(!r.por_segmento) throw new Error('falta actualizar el Apps Script (la acción getIngresosMHE no trae las resoluciones)');
+    const pick = function(nombre){
+      const x = r.por_segmento[nombre];
+      if(!x) return {ap:0, dv:0, rc:0, pend:0};
+      const q = x.res;
+      if(!q) throw new Error('falta actualizar el Apps Script (la acción getIngresosMHE no trae las resoluciones)');
+      return {ap:(q.aprobada || 0) + (q.propuesta || 0), dv:q.devuelta || 0, rc:q.rechazada || 0, pend:q.pendiente || 0};
+    };
+    datos.pv = pick('Primera Vivienda'); datos.subsidio = pick('Subsidio');
+  }catch(e){ errores['Sábana'] = e.message || String(e); }
+  _dashResEstado = {desde:desde, hasta:hasta, datos:datos, errores:errores};
+  dashResultadosPintar();
+}
+
 async function loadDashboard(){
   const body = document.getElementById('dashboard-body');
   const weekLabel = document.getElementById('dashboard-week-label');
@@ -6562,6 +7131,8 @@ async function loadDashboard(){
           },plugins:{...chartDefaults.plugins,legend:{display:true,position:'top',labels:{color:'#AABBD0',font:{size:10}}}}}});
           dashIngresosAgregar(chartPlanTubo, weekDays, opsSinFiltro);
         }
+        try{ dashSolicitudesRender(weekDays, opsSinFiltro); }catch(e){ console.warn('Solicitudes del período:', e); }
+        try{ dashResultadosRender(weekDays, opsSinFiltro); }catch(e){ console.warn('Resultados del período:', e); }
 
       }catch(chartErr){ console.warn('Error en gráficos:', chartErr); }
     }, 100);
