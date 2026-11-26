@@ -2599,6 +2599,152 @@ function urgAsigAgregar(){
 }
 // ─── FIN ASIGNAR URGENCIAS ───
 
+// ─── LEASING DESDE CORREO (buzón riesgo@hogarhoy.cl): propuesta de asignación con confirmación ───
+// Lee los correos NO LEÍDOS (el script lector nunca los marca como leídos), un registro por ID, y propone analista
+// con la misma lógica de cupo que MHE. Excluye los ID que ya están en el reparto de hoy o de los últimos días.
+var _lc = {rows:[], ya:[], forz:{}, desde:'', info:null};
+function lcYmd(d){ return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+function lcDiaHabilAnterior(){ const d = new Date(); do{ d.setDate(d.getDate() - 1); }while(d.getDay() === 0 || d.getDay() === 6); return lcYmd(d); }
+function lcFechaCorta(iso){ const d = new Date(iso); return isNaN(d) ? '—' : ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMonth() + 1)).slice(-2) + ' ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); }
+function lcAbrir(){
+  if(!_urgPuedeEditar()){ alert('Solo el Jefe de Riesgo puede asignar Leasing desde el correo.'); return; }
+  document.getElementById('lc-modal-bg')?.remove();
+  _lc = {rows:[], ya:[], forz:{}, desde:lcDiaHabilAnterior(), info:null};
+  const bg = document.createElement('div');
+  bg.id = 'lc-modal-bg';
+  bg.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,16,41,.55);z-index:9500;display:flex;align-items:center;justify-content:center;padding:16px;';
+  bg.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:1000px;width:100%;max-height:92vh;overflow:auto;padding:16px 18px;">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;"><div style="font-weight:800;font-size:15px;color:var(--navy);">📧 Leasing desde correo (riesgo@hogarhoy.cl)</div><button onclick="document.getElementById(\'lc-modal-bg\').remove()" style="border:none;background:none;font-size:20px;cursor:pointer;">✕</button></div>'
+    + '<div style="font-size:12px;color:var(--gray-text);margin:6px 0 10px;">Lee los correos <b>no leídos</b> desde la fecha indicada (sin marcarlos como leídos). Un mismo ID cuenta una sola vez. Las ya asignadas en el reparto de hoy o de los últimos días se excluyen.</div>'
+    + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;"><label style="font-size:12px;font-weight:600;">Desde <input type="date" id="lc-desde" value="' + _lc.desde + '" style="padding:4px 6px;border:1px solid var(--gray-line);border-radius:6px;"></label>'
+    + '<button id="lc-btn-leer" onclick="lcLeer()" style="padding:7px 14px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:700;cursor:pointer;">Leer correos no leídos</button></div>'
+    + '<div id="lc-cuerpo"></div></div>';
+  document.body.appendChild(bg);
+}
+// IDs de Leasing ya cargados: reparto de hoy + días anteriores (lectura de Firebase, últimos 7 días hábiles)
+async function lcYaAsignados(){
+  const ya = {};
+  const add = function(op, fecha){ if(op && op.productKey === 'leasing' && op.identificador){ const k = asigNorm(op.identificador); if(k && !ya[k]) ya[k] = {fecha:fecha, analista:op.analista || ''}; } };
+  dayOps.forEach(function(o){ add(o, currentDate); });
+  const fechas = [], hoy = new Date(currentDate + 'T12:00:00');
+  for(let i = 0, d = new Date(hoy); fechas.length < 7 && i < 20; i++, d.setDate(d.getDate() - 1)){ if(d.getDay() !== 0 && d.getDay() !== 6) fechas.push(lcYmd(d)); }
+  let fallidos = 0;
+  await Promise.all(fechas.map(async function(f){
+    try{
+      const data = await fbGet('ops/' + f);
+      const ops = !data ? [] : (typeof data === 'string' ? JSON.parse(data) : (Array.isArray(data) ? data : []));
+      ops.forEach(function(o){ add(o, f); });
+    }catch(e){ fallidos++; }
+  }));
+  return {ya:ya, fallidos:fallidos};
+}
+function lcPreparar(items, ya, ahoraMs){
+  const rows = [], excl = [], vistos = {};
+  (items || []).forEach(function(it){
+    const k = it.id ? asigNorm(it.id) : '';
+    if(k && ya[k]){ excl.push({id:it.id, fecha:ya[k].fecha, analista:ya[k].analista}); return; }
+    if(k && vistos[k]) return;             // seguridad: un ID, una operación
+    if(k) vistos[k] = 1;
+    const t = Date.parse(it.fecha);
+    rows.push({id:it.id || '', idManual:'', asunto:it.asunto || '', de:it.de || '', fecha:it.fecha, n:it.n || 1, sinId:!it.id, h:isNaN(t) ? null : (ahoraMs - t) / 3600000, agregar:true, manual:'', analista:'', motivo:'', forzada:false});
+  });
+  return {rows:rows, excl:excl};
+}
+function lcIdFila(r){ return String(r.id || r.idManual || '').trim(); }
+// Calcula analista/motivo. Pura salvo lectura de TEAM, availability, CAPS, dayType, dayOps.
+function lcCalcular(rows, forzSel){
+  let cap = CAPS[dayType]; if(typeof cap !== 'number' || isNaN(cap)) cap = 21;
+  const carga = {}; dayOps.forEach(function(o){ if(o.analista && !o._forzada) carga[o.analista] = (carga[o.analista] || 0) + 1; });
+  const c = function(n){ return carga[n] || 0; };
+  rows.forEach(function(r){ r.analista = ''; r.motivo = ''; r.forzada = false; });
+  const validas = rows.filter(function(r){ if(!lcIdFila(r)){ r.motivo = 'Escribe el ID para poder agregarla'; return false; } return true; });
+  validas.forEach(function(r){
+    if(r.manual){ r.forzada = c(r.manual) >= cap; carga[r.manual] = c(r.manual) + 1; r.analista = r.manual; r.motivo = 'Elegido por ti' + (r.forzada ? ' · sobre el cupo (adicional)' : ''); }
+  });
+  const cand = validas.filter(function(r){ return !r.analista; }).map(function(r){ return {seg:'leasing', h:r.h, ant:null, reingreso:false, row:r}; });
+  if(cand.length){
+    const prev = {}; Object.keys(carga).forEach(function(k){ prev[k] = carga[k]; });
+    const R = asigAsignar(cand, prev);
+    R.filas.forEach(function(f){ const r = f.c.row; if(f.analista){ r.analista = f.analista; r.motivo = f.motivo; carga[f.analista] = c(f.analista) + 1; } });
+  }
+  const forzNames = urgAsigNombres().filter(function(n){ return forzSel[n]; });
+  validas.filter(function(r){ return !r.analista; }).sort(function(a, b){ return (b.h === null ? -1 : b.h) - (a.h === null ? -1 : a.h); }).forEach(function(r){
+    if(!forzNames.length){ r.motivo = 'Sin cupo · elige a quién forzarla'; return; }
+    const n = forzNames.slice().sort(function(a, b){ return c(a) - c(b) || a.localeCompare(b); })[0];
+    r.analista = n; r.forzada = true; carga[n] = c(n) + 1; r.motivo = 'Sin cupo · forzada (adicional) a ' + n;
+  });
+  return {cap:cap, carga:carga};
+}
+async function lcLeer(){
+  const cuerpo = document.getElementById('lc-cuerpo'), btn = document.getElementById('lc-btn-leer');
+  const desde = (document.getElementById('lc-desde') || {}).value || lcDiaHabilAnterior();
+  if(btn){ btn.disabled = true; btn.textContent = '⏳ Leyendo el buzón…'; }
+  cuerpo.innerHTML = '<div style="font-size:12px;color:var(--gray-text);">⏳ Leyendo correos no leídos y revisando lo ya asignado…</div>';
+  try{
+    const resp = await Promise.all([gsCall('getLeasingCorreos', {desde:desde}), lcYaAsignados()]);
+    const r = resp[0], y = resp[1];
+    if(!r || r.error) throw new Error((r && r.error) || 'Sin respuesta del servidor');
+    const P = lcPreparar(r.items || [], y.ya, Date.now());
+    _lc.rows = P.rows; _lc.ya = P.excl; _lc.desde = desde;
+    _lc.info = {mensajes:r.mensajes || 0, truncado:!!r.truncado, fallidos:y.fallidos, ids:(r.items || []).length};
+    lcRender();
+  }catch(e){ cuerpo.innerHTML = '<div style="font-size:12px;color:#C0392B;">No se pudo leer el buzón: ' + _urgEsc(e.message || String(e)) + '</div>'; }
+  if(btn){ btn.disabled = false; btn.textContent = 'Leer correos no leídos'; }
+}
+function lcRender(){
+  const cuerpo = document.getElementById('lc-cuerpo'); if(!cuerpo) return;
+  const rows = _lc.rows, res = lcCalcular(rows, _lc.forz), nombres = urgAsigNombres(), E = _urgEsc;
+  rows.sort(function(a, b){ return (b.h === null ? -1 : b.h) - (a.h === null ? -1 : a.h); });
+  const opts = function(v){ return '<option value="">—</option>' + nombres.map(function(n){ return '<option value="' + E(n) + '"' + (v === n ? ' selected' : '') + '>' + E(urgAsigEtq(n)) + '</option>'; }).join(''); };
+  const I = _lc.info || {};
+  let h = '<div style="font-size:12px;margin-bottom:6px;"><b>' + rows.length + '</b> por asignar · ' + _lc.ya.length + ' ya asignadas (excluidas) · ' + (I.mensajes || 0) + ' correos no leídos leídos → ' + (I.ids || 0) + ' IDs distintos desde el ' + E(_lc.desde) + '</div>';
+  if(I.truncado) h += '<div style="font-size:12px;color:#BA7517;margin-bottom:6px;">⚠ Hay más correos de los que se pueden leer de una vez; acorta el rango «Desde».</div>';
+  if(I.fallidos) h += '<div style="font-size:12px;color:#BA7517;margin-bottom:6px;">⚠ No se pudieron revisar ' + I.fallidos + ' día(s) anteriores del gestor: puede haber IDs ya asignados que no se excluyeron.</div>';
+  if(!nombres.length) h += '<div style="font-size:12px;color:#C0392B;margin-bottom:6px;">⚠ No hay analistas cargados en el equipo de este navegador. Revisa la pestaña Equipo.</div>';
+  if(!rows.length){ h += '<div style="padding:14px;text-align:center;color:var(--gray-text);font-size:13px;">No hay correos no leídos por asignar.</div>'; }
+  else {
+    h += '<div style="font-size:11px;color:var(--gray-text);margin-bottom:6px;">Se asigna a la más antigua primero, con el cupo (' + res.cap + ' por analista) y los analistas de Leasing disponibles. Las <b>forzadas</b> (sin cupo) son adicionales y se reparten entre los que marques, o elige analista por fila.</div>'
+      + '<div style="font-size:12px;margin-bottom:8px;"><b>Analistas para forzadas:</b> ' + nombres.map(function(n){ return '<label style="margin-right:10px;white-space:nowrap;"><input type="checkbox" data-n="' + E(n) + '" ' + (_lc.forz[n] ? 'checked ' : '') + 'onchange="_lc.forz[this.getAttribute(\'data-n\')]=this.checked;lcRender()"> ' + E(urgAsigEtq(n)) + ' <span style="color:var(--gray-text);">(' + (res.carga[n] || 0) + ')</span></label>'; }).join('') + '</div>';
+    h += '<div style="overflow:auto;max-height:44vh;border:1px solid #E5E9EF;border-radius:8px;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><tr style="background:#F4F6F9;text-align:left;"><th style="padding:4px 8px;">✓</th><th>ID</th><th>Asunto</th><th>Recibido</th><th>Correos</th><th>Analista</th><th>Detalle</th></tr>';
+    rows.forEach(function(r, i){
+      const idCel = r.sinId ? '<input type="text" value="' + E(r.idManual) + '" placeholder="ID" onchange="_lc.rows[' + i + '].idManual=this.value;lcRender()" style="width:90px;font-size:12px;padding:2px 4px;border:1px solid #BA7517;border-radius:6px;">' : '<b>' + E(r.id) + '</b>';
+      const puede = !!(r.analista && lcIdFila(r));
+      h += '<tr style="border-top:1px solid #EEF1F4;' + (r.forzada ? 'background:#FFF6E5;' : (!puede ? 'background:#FCEBEB;' : '')) + '"><td style="padding:4px 8px;"><input type="checkbox" ' + (r.agregar && puede ? 'checked ' : '') + (puede ? '' : 'disabled ') + 'onchange="_lc.rows[' + i + '].agregar=this.checked;lcRender()"></td>'
+        + '<td>' + idCel + '</td><td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + E(r.asunto) + '">' + E(r.asunto) + '</td><td style="white-space:nowrap;">' + E(lcFechaCorta(r.fecha)) + (r.h === null ? '' : ' · ' + r.h.toFixed(0) + ' h') + '</td><td>' + r.n + '</td>'
+        + '<td><select onchange="_lc.rows[' + i + '].manual=this.value;_lc.rows[' + i + '].agregar=true;lcRender()" style="font-size:12px;padding:2px 4px;border:1px solid var(--gray-line);border-radius:6px;">' + opts(r.analista) + '</select></td>'
+        + '<td style="color:var(--gray-text);">' + E(r.motivo) + '</td></tr>';
+    });
+    h += '</table></div>';
+    const nAdd = rows.filter(function(r){ return r.agregar && r.analista && lcIdFila(r); }).length, nF = rows.filter(function(r){ return r.agregar && r.analista && lcIdFila(r) && r.forzada; }).length;
+    h += '<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><button onclick="lcAgregar()" ' + (nAdd ? '' : 'disabled ') + 'style="padding:7px 14px;border:none;border-radius:8px;background:var(--navy);color:#fff;font-weight:700;cursor:pointer;' + (nAdd ? '' : 'opacity:.5;') + '">➕ Agregar ' + nAdd + ' Leasing al reparto de hoy</button><span style="font-size:12px;color:var(--gray-text);">' + nF + ' forzadas (adicionales) · los correos quedan sin leer</span></div>';
+  }
+  if(_lc.ya.length) h += '<details style="margin-top:8px;font-size:12px;"><summary style="cursor:pointer;color:var(--gray-text);">' + _lc.ya.length + ' ya asignadas (excluidas)</summary>' + _lc.ya.map(function(x){ return '<div style="padding:2px 0 2px 14px;">' + E(x.id) + ' · ' + E(x.analista || 'sin analista') + ' · ' + E(x.fecha) + '</div>'; }).join('') + '</details>';
+  cuerpo.innerHTML = h;
+}
+function lcAgregar(){
+  if(!_urgPuedeEditar()){ alert('Solo el Jefe de Riesgo puede agregar Leasing al reparto.'); return; }
+  lcCalcular(_lc.rows, _lc.forz);
+  const ya = {}; dayOps.forEach(function(o){ if(o.productKey === 'leasing' && o.identificador) ya[asigNorm(o.identificador)] = 1; });
+  const filas = _lc.rows.filter(function(r){ return r.agregar && r.analista && lcIdFila(r) && !ya[asigNorm(lcIdFila(r))]; });
+  if(!filas.length){ alert('No hay operaciones nuevas para agregar.'); return; }
+  const nF = filas.filter(function(r){ return r.forzada; }).length;
+  if(!window.confirm('Se agregarán ' + filas.length + ' operaciones de Leasing al reparto de hoy (' + nF + ' forzadas como adicionales).\nLos correos NO se marcan como leídos.\n\n¿Continuar?')) return;
+  const p = PRODUCTS.find(function(x){ return x.key === 'leasing'; }), ahoraIso = new Date().toISOString();
+  filas.forEach(function(r){
+    const t = new Date(r.fecha), fr = isNaN(t) ? currentDate : lcYmd(t);
+    dayOps.push({
+      uid: uid(), productKey: 'leasing', productName: p ? p.name : 'Leasing Habitacional',
+      identificador: lcIdFila(r), analista: r.analista, estado: 'PENDIENTE', tier: classifyTier(fr, p ? p.slaH : 24),
+      fecha_riesgo: fr, obs: 'Origen: correo riesgo@hogarhoy.cl | Recibido ' + lcFechaCorta(r.fecha) + (r.forzada ? ' | Adicional forzada' : ''), obs_seguimiento: '',
+      asignado_en: ahoraIso, completado_en: null, _origen_correo: true, _forzada: !!r.forzada
+    });
+  });
+  saveDraft(); buildOpsEntry(); updateDraftBadge();
+  alert('Se agregaron ' + filas.length + ' operaciones de Leasing (' + nF + ' forzadas). Revisa la asignación y confirma el reparto.');
+  lcLeer();
+}
+// ─── FIN LEASING DESDE CORREO ───
+
 // ─── CONSULTA DE SLA POR RUT / ID ───────────────────────────────────────────────────────────
 // El gestor pregunta al Apps Script (acción getSLAPorIdentificadores) por una lista de RUT o IDs de operación y recibe,
 // para cada uno: si está pendiente o resuelta en la sábana, desde cuándo, segmento, categoría e iteración.
@@ -3631,6 +3777,7 @@ function buildOpsEntry(){
           </div>
           <div id="op-list-${p.key}">${ops.map(o=>opRowHTML(o, p)).join('')}</div>
           <button class="add-op-btn" onclick="addOp('${p.key}')">+ Agregar ${p.idType}</button>
+          ${p.key==='leasing' && _urgPuedeEditar() ? '<button class="add-op-btn" onclick="lcAbrir()" style="margin-left:8px;">📧 Leasing desde correo</button>' : ''}
         </div>`;
     }).join('');
   } else {
